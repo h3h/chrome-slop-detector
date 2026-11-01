@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Dashboard</title></head>
+<body>
+<header><span>Acme Console</span> <button type="button">Sign out</button></header>
+<aside><nav><a href="#overview">Overview</a> <a href="#billing">Billing</a> <a href="#users">Users</a> <a href="#settings">Settings</a></nav></aside>
+<main>
+  <h1>Overview</h1>
+  <div class="cards">
+    <div class="card"><span>Active users</span> <strong>1,204</strong></div>
+    <div class="card"><span>Revenue</span> <strong>$12,930</strong></div>
+    <div class="card"><span>Open tickets</span> <strong>17</strong></div>
+  </div>
+  <form>
+    <label>Search users <input type="search" name="q"></label>
+    <label>Role <select name="role"><option>All</option><option>Admin</option><option>Member</option></select></label>
+    <button type="submit">Filter</button>
+  </form>
+  <table>
+    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead>
+    <tbody>
+      <tr><td>Ada</td><td>ada@example.com</td><td>Admin</td><td><button>Edit</button></td></tr>
+      <tr><td>Bo</td><td>bo@example.com</td><td>Member</td><td><button>Edit</button></td></tr>
+      <tr><td>Cy</td><td>cy@example.com</td><td>Member</td><td><button>Edit</button></td></tr>
+    </tbody>
+  </table>
+</main>
+</body>
+</html>
