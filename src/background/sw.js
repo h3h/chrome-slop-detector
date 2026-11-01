@@ -35,8 +35,10 @@ async function route(msg, sender) {
     case 'get-tab-state':
       return getTabState(requireTabId(msg.tabId), deps);
     case 'check-tab':
-      await chrome.tabs.sendMessage(requireTabId(msg.tabId), { type: 'run-check', force: !!msg.force }, { frameId: 0 });
-      return { ok: true };
+    {
+      const r = await chrome.tabs.sendMessage(requireTabId(msg.tabId), { type: 'run-check', force: !!msg.force }, { frameId: 0 });
+      return { ok: true, skipped: typeof r?.skipped === 'string' ? r.skipped : null };
+    }
     case 'deny-host':
       return denyHost(msg.host, deps);
     case 'test-provider':

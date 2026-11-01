@@ -446,8 +446,14 @@ describe('sw.js routing', () => {
 
   it('check-tab forwards run-check to the top frame', async () => {
     const { chrome } = await loadSw();
-    expect(await chrome._fireMessage({ type: 'check-tab', tabId: 5, force: 1 }, EXT)).toEqual({ ok: true });
+    expect(await chrome._fireMessage({ type: 'check-tab', tabId: 5, force: 1 }, EXT)).toEqual({ ok: true, skipped: null });
     expect(chrome._tabMessages).toEqual([{ tabId: 5, msg: { type: 'run-check', force: true }, options: { frameId: 0 } }]);
+  });
+
+  it('check-tab relays the content script skipped reason', async () => {
+    const { chrome } = await loadSw();
+    chrome._tabReply = { ok: true, skipped: 'not_article' };
+    expect(await chrome._fireMessage({ type: 'check-tab', tabId: 5 }, EXT)).toEqual({ ok: true, skipped: 'not_article' });
   });
 
   it('deny-host, get-settings, save-settings', async () => {

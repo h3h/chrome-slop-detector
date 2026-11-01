@@ -84,6 +84,7 @@ export function createChromeStub() {
       },
       async sendMessage(tabId, msg, options) {
         chrome._tabMessages.push(options === undefined ? { tabId, msg } : { tabId, msg, options });
+        return chrome._tabReply;
       },
       onRemoved: { addListener: (fn) => listeners.tabRemoved.push(fn) },
       onUpdated: { addListener: (fn) => listeners.tabUpdated.push(fn) }

@@ -141,7 +141,7 @@ src/options/            plain DOM; provider, key, endpoint, model, threshold, mo
   senders may only send `classify` and `get-content-config`; all other messages require an
   extension-page sender. Popup →
   SW: `get-tab-state`, `check-tab` (Manual / Re-check with `force` bypassing cache, still rate
-  limited), `deny-host`. SW → content: `run-check` (popup button).
+  limited), `deny-host`. SW → content: `run-check` (popup button); content replies `{ok:true, skipped: null|'denied'|'lang'|'scheme'|'not_article'|'no_text'|'unavailable'}`, relayed to the popup by `check-tab`.
 
 ## Testing
 
