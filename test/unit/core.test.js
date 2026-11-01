@@ -459,7 +459,7 @@ describe('sw.js routing', () => {
   it('deny-host, get-settings, save-settings', async () => {
     const { chrome } = await loadSw();
     const s = await chrome._fireMessage({ type: 'deny-host', host: 'Foo.com' }, EXT);
-    expect(s.denyList).toContain('foo.com');
+    expect(s).toEqual({ ok: true });
     expect((await chrome._fireMessage({ type: 'get-settings' }, EXT)).denyList).toContain('foo.com');
     const ok = await chrome._fireMessage({ type: 'save-settings', patch: { threshold: 0.95 } }, EXT);
     expect(ok).toMatchObject({ ok: true, settings: { threshold: 0.95 } });

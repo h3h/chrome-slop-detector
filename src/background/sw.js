@@ -40,7 +40,9 @@ async function route(msg, sender) {
       return { ok: true, skipped: typeof r?.skipped === 'string' ? r.skipped : null };
     }
     case 'deny-host':
-      return denyHost(msg.host, deps);
+      // Reply without settings: the full object carries the API key.
+      await denyHost(msg.host, deps);
+      return { ok: true };
     case 'test-provider':
       return testProvider(deps);
     case 'get-settings':
