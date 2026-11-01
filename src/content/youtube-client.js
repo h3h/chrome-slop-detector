@@ -5,14 +5,16 @@
 // itself: page script shares the window with the MAIN-world script and can read or forge
 // any of these messages. What prevents a forged reply from steering a credentialed fetch
 // is fetchTranscript's check that baseUrl is an https youtube.com URL.
-import { MSG_NS, videoIdFromUrl, pickCaptionTrack, parseJson3, isValidReply, isYouTubeUrl } from '../lib/youtube.js';
+import { MSG_NS, videoIdFromUrl, pickCaptionTrack, parseJson3, isValidReply, isYouTubeUrl, isValidPot, withPot } from '../lib/youtube.js';
 
 function newNonce(win) {
   const c = win.crypto ?? globalThis.crypto;
   return c.randomUUID();
 }
 
-export function requestPlayer(win, { timeoutMs = 1500 } = {}) {
+// Posts request to the MAIN-world script and resolves with the matching reply's data, or null
+// on timeout.
+function ask(win, request, replyType, timeoutMs) {
   return new Promise((resolve) => {
     let nonce;
     let timer;
@@ -22,24 +24,34 @@ export function requestPlayer(win, { timeoutMs = 1500 } = {}) {
       resolve(value);
     };
     function onMessage(event) {
-      if (!isValidReply(event, nonce, win)) return;
-      const d = event.data;
-      finish({
-        videoId: d.videoId,
-        title: typeof d.title === 'string' ? d.title : '',
-        shortDescription: typeof d.shortDescription === 'string' ? d.shortDescription : '',
-        captionTracks: Array.isArray(d.captionTracks) ? d.captionTracks : [],
-      });
+      if (isValidReply(event, nonce, win, replyType)) finish(event.data);
     }
     try {
       nonce = newNonce(win);
       win.addEventListener('message', onMessage);
       timer = setTimeout(() => finish(null), timeoutMs);
-      win.postMessage({ [MSG_NS]: nonce, type: 'get-player' }, win.location.origin);
+      win.postMessage({ ...request, [MSG_NS]: nonce }, win.location.origin);
     } catch {
       finish(null);
     }
   });
+}
+
+export async function requestPlayer(win, { timeoutMs = 1500 } = {}) {
+  const d = await ask(win, { type: 'get-player' }, 'player', timeoutMs);
+  if (!d) return null;
+  return {
+    videoId: d.videoId,
+    title: typeof d.title === 'string' ? d.title : '',
+    shortDescription: typeof d.shortDescription === 'string' ? d.shortDescription : '',
+    captionTracks: Array.isArray(d.captionTracks) ? d.captionTracks : [],
+  };
+}
+
+// Asks the MAIN world for a caption pot for videoId (see yt-main.js); null when none.
+export async function requestPot(win, { videoId, languageCode }, { timeoutMs = 5000 } = {}) {
+  const d = await ask(win, { type: 'get-pot', videoId, languageCode, timeoutMs }, 'pot', timeoutMs + 1000);
+  return isValidPot(d?.pot) ? d.pot : null;
 }
 
 // GET baseUrl with fmt=json3. The timeout and the caller's signal cover both the request and
@@ -93,9 +105,11 @@ function delay(ms, signal) {
 //   the URL changes while the transcript loads, or when the caller aborts;
 // - {skip:'lang'} when no English track is usable and at least one track has a non-English
 //   languageCode (E6: the video is not English).
+// An empty English track is retried once with a pot from the player (YouTube's PO-token
+// experiment answers tokenless caption requests with an empty body).
 // The title + description fallback is used only when there are no caption tracks or the
 // English track yields no text.
-export async function getYouTubeText(win, fetchFn, { signal, retries = 2, retryDelayMs = 400, requestTimeoutMs } = {}) {
+export async function getYouTubeText(win, fetchFn, { signal, retries = 2, retryDelayMs = 400, requestTimeoutMs, potTimeoutMs } = {}) {
   const want = () => videoIdFromUrl(win.location.href);
   const reqOpts = requestTimeoutMs === undefined ? {} : { timeoutMs: requestTimeoutMs };
   let info = null;
@@ -121,7 +135,12 @@ export async function getYouTubeText(win, fetchFn, { signal, retries = 2, retryD
   );
   if (!picked && hasNonEn) return { skip: 'lang' };
   if (picked) {
-    const text = await fetchTranscript(picked.track, fetchFn, { signal });
+    let text = await fetchTranscript(picked.track, fetchFn, { signal });
+    if (!text && !signal?.aborted && videoId === want()) {
+      const potOpts = potTimeoutMs === undefined ? {} : { timeoutMs: potTimeoutMs };
+      const pot = await requestPot(win, { videoId, languageCode: picked.track.languageCode }, potOpts);
+      if (pot && !signal?.aborted) text = await fetchTranscript({ baseUrl: withPot(picked.track.baseUrl, pot) }, fetchFn, { signal });
+    }
     if (signal?.aborted || videoId !== want()) return null;
     if (text) return { text, title, source: 'transcript', asr: picked.asr, videoId };
   }

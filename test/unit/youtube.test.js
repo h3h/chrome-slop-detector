@@ -11,6 +11,8 @@ import {
   parseJson3,
   extractPlayerInfo,
   isValidReply,
+  potFromUrl,
+  withPot,
 } from '../../src/lib/youtube.js';
 import { requestPlayer, fetchTranscript, getYouTubeText } from '../../src/content/youtube-client.js';
 
@@ -421,6 +423,132 @@ describe('getYouTubeText', () => {
       setTimeout(() => ac.abort(), 5);
     }));
     expect(await getYouTubeText(window, f, { signal: ac.signal })).toBeNull();
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('potFromUrl / withPot', () => {
+  const cap = 'https://www.youtube.com/api/timedtext?v=vid123&lang=en&pot=Mn-Tok_en%3D&c=WEB';
+  it('reads pot from a timedtext URL for the same video', () => {
+    expect(potFromUrl(cap, 'vid123')).toBe('Mn-Tok_en=');
+  });
+  it('rejects other videos, other paths, other hosts, missing or malformed pot', () => {
+    expect(potFromUrl(cap, 'other')).toBeNull();
+    expect(potFromUrl(cap.replace('/api/timedtext', '/api/other'), 'vid123')).toBeNull();
+    expect(potFromUrl(cap.replace('www.youtube.com', 'evil.example'), 'vid123')).toBeNull();
+    expect(potFromUrl(TRACK_URL, 'vid123')).toBeNull();
+    expect(potFromUrl(TRACK_URL + '&pot=a%26b', 'vid123')).toBeNull();
+    expect(potFromUrl('not a url', 'vid123')).toBeNull();
+  });
+  it('withPot adds pot and c=WEB, keeping the rest', () => {
+    const u = new URL(withPot(TRACK_URL, 'TOK'));
+    expect(u.searchParams.get('pot')).toBe('TOK');
+    expect(u.searchParams.get('c')).toBe('WEB');
+    expect(u.searchParams.get('lang')).toBe('en');
+  });
+});
+
+describe('getYouTubeText proof-of-origin retry', () => {
+  const POT = 'PoToken_123-abc';
+  // YouTube answers a timedtext request without pot with 200 and an empty body.
+  const emptyThenCaptions = () => vi.fn(async (url) => {
+    const has = new URL(url).searchParams.has('pot');
+    return { ok: true, status: 200, json: async () => { if (!has) throw new SyntaxError('empty'); return json3; } };
+  });
+  let observers;
+  const NativePO = globalThis.PerformanceObserver;
+
+  beforeEach(async () => {
+    installFaithfulPostMessage();
+    await import('../../src/content/yt-main.js');
+    window.ytInitialPlayerResponse = playerResponse({ tracks: [{ baseUrl: TRACK_URL, languageCode: 'en', kind: 'asr' }] });
+    observers = [];
+    globalThis.PerformanceObserver = class {
+      constructor(cb) { this.cb = cb; this.disconnect = vi.fn(); observers.push(this); }
+      observe() {}
+    };
+    localStorage.clear();
+  });
+  afterEach(() => {
+    window.postMessage = nativePostMessage;
+    globalThis.PerformanceObserver = NativePO;
+    delete window.ytInitialPlayerResponse;
+    document.body.replaceChildren();
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  const emitPot = () => {
+    const entry = { name: `${TRACK_URL}&pot=${POT}&c=WEB` };
+    for (const o of observers) o.cb({ getEntries: () => [entry] });
+  };
+  function mountPlayer(prior = {}) {
+    const el = document.createElement('div');
+    el.id = 'movie_player';
+    el.getOption = vi.fn(() => prior);
+    el.loadModule = vi.fn();
+    el.unloadModule = vi.fn();
+    el.setOption = vi.fn((mod, key, val) => {
+      if (val?.languageCode === 'en' && !el.toggled) {
+        el.toggled = true;
+        localStorage.setItem('yt-player-caption-sticky-language', '{"data":"en"}');
+        localStorage.setItem('yt-player-caption-persistence', '{"data":"true"}');
+        setTimeout(emitPot, 0);
+      }
+    });
+    document.body.append(el);
+    return el;
+  }
+
+  it('reuses a pot from a timedtext request the player already made, without touching the player', async () => {
+    vi.spyOn(performance, 'getEntriesByType').mockReturnValue([{ name: `${TRACK_URL}&pot=${POT}&c=WEB` }]);
+    const el = mountPlayer();
+    const f = emptyThenCaptions();
+    const r = await getYouTubeText(window, f);
+    expect(r).toMatchObject({ text: 'Hello world again', source: 'transcript', asr: true });
+    const second = new URL(f.mock.calls[1][0]);
+    expect(second.searchParams.get('pot')).toBe(POT);
+    expect(second.searchParams.get('c')).toBe('WEB');
+    expect(el.setOption).not.toHaveBeenCalled();
+  });
+
+  it('briefly enables the caption track to capture a pot, then restores captions and storage', async () => {
+    localStorage.setItem('yt-player-caption-persistence', '{"data":"false"}');
+    const el = mountPlayer({});
+    const f = emptyThenCaptions();
+    const r = await getYouTubeText(window, f);
+    expect(r).toMatchObject({ text: 'Hello world again', source: 'transcript' });
+    expect(el.setOption).toHaveBeenCalledWith('captions', 'track', { languageCode: 'en' });
+    expect(el.setOption).toHaveBeenLastCalledWith('captions', 'track', {});
+    expect(el.unloadModule).toHaveBeenCalledWith('captions');
+    expect(localStorage.getItem('yt-player-caption-sticky-language')).toBeNull();
+    expect(localStorage.getItem('yt-player-caption-persistence')).toBe('{"data":"false"}');
+    expect(observers[0].disconnect).toHaveBeenCalled();
+  });
+
+  it('puts back a caption track that was already selected', async () => {
+    const prior = { languageCode: 'en', kind: 'asr' };
+    const el = mountPlayer(prior);
+    await getYouTubeText(window, emptyThenCaptions());
+    expect(el.setOption).toHaveBeenLastCalledWith('captions', 'track', prior);
+    expect(el.unloadModule).not.toHaveBeenCalled();
+  });
+
+  it('restores the player and falls back to the description when no pot arrives', async () => {
+    const el = mountPlayer({});
+    el.setOption = vi.fn();
+    const f = emptyThenCaptions();
+    const r = await getYouTubeText(window, f, { potTimeoutMs: 30 });
+    expect(r).toMatchObject({ source: 'description' });
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(el.setOption).toHaveBeenLastCalledWith('captions', 'track', {});
+  });
+
+  it('ignores a malformed pot', async () => {
+    vi.spyOn(performance, 'getEntriesByType').mockReturnValue([{ name: `${TRACK_URL}&pot=bad%20token` }]);
+    const f = emptyThenCaptions();
+    const r = await getYouTubeText(window, f, { potTimeoutMs: 30 });
+    expect(r).toMatchObject({ source: 'description' });
     expect(f).toHaveBeenCalledTimes(1);
   });
 });

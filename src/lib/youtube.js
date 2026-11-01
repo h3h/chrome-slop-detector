@@ -86,13 +86,37 @@ export function extractPlayerInfo(playerResponse) {
   };
 }
 
-export function isValidReply(event, nonce, win) {
+export function isValidReply(event, nonce, win, type = 'player') {
   const data = event?.data;
   return (
     event?.source === win &&
     data !== null &&
     typeof data === 'object' &&
     data[MSG_NS] === nonce &&
-    data.type === 'player'
+    data.type === type
   );
+}
+
+// Proof-of-origin token the player adds to its own timedtext requests. Without it, caption
+// tracks under YouTube's PO-token experiment answer 200 with an empty body.
+const POT_RE = /^[A-Za-z0-9_+/=-]{1,4096}$/;
+
+export function isValidPot(pot) {
+  return typeof pot === 'string' && POT_RE.test(pot);
+}
+
+// The pot of a youtube.com timedtext request for videoId, or null.
+export function potFromUrl(url, videoId) {
+  if (!isYouTubeUrl(url)) return null;
+  const u = new URL(url);
+  if (u.pathname !== '/api/timedtext' || u.searchParams.get('v') !== videoId) return null;
+  const pot = u.searchParams.get('pot');
+  return isValidPot(pot) ? pot : null;
+}
+
+export function withPot(baseUrl, pot) {
+  const u = new URL(baseUrl);
+  u.searchParams.set('pot', pot);
+  u.searchParams.set('c', 'WEB');
+  return u.toString();
 }
