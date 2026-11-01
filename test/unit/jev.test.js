@@ -36,7 +36,8 @@ describe('jev request', () => {
     expect(Object.keys(body.questions)).toEqual(['ai_authorship']);
     const q = body.questions.ai_authorship;
     expect(q.type).toBe('choice');
-    expect(typeof q.instructions).toBe('string');
+    expect(q.instructions.question).toMatch(/AI language model/);
+    expect(q.instructions.ai_signs.length).toBeGreaterThan(0);
     expect(Object.keys(q.criteria)).toEqual(OPTIONS);
   });
 

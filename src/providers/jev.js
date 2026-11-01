@@ -7,15 +7,35 @@ export const QUESTION_ID = 'ai_authorship';
 export const AI_OPTION = 'ai_generated';
 export const OPTIONS = ['ai_generated', 'human_written', 'unclear'];
 export const DEFAULT_MODEL = 'jev-1.13.0';
+// Bump whenever INSTRUCTIONS or CRITERIA change: it is part of the cache key, so verdicts from
+// an older prompt are not reused.
+export const PROMPT_VERSION = 2;
 
 // The question id is never sent to the model, so the instructions carry the full meaning.
-const INSTRUCTIONS =
-  'Was the `state` text obviously written by an AI language model? Judge the writing itself: stock phrasing, uniform rhythm, generic structure and hedged filler suggest AI; specific lived detail, idiosyncratic voice and uneven rhythm suggest a human.';
+// Modern AI prose is confident and number-dense rather than hedged, so the signs describe its
+// style; tuned on a small labeled set (AI SEO guides, AI explainers, human essays, wikis).
+const INSTRUCTIONS = {
+  question: 'Was the `state` text written by an AI language model (such as ChatGPT or Claude), with little human rewriting?',
+  judge: 'Judge the prose style, not the topic or whether the facts are accurate. Modern AI writing is often confident and dense with numbers rather than hedged, so do not treat specificity or statistics as evidence of a human.',
+  ai_signs: [
+    'Frequent em-dash asides and "X — not Y" or "not X, but Y" contrasts',
+    'Short punchy verdict sentences and tidy aphorisms that sum up the point just made',
+    'Items given personified role labels (the reliable one, the big sibling, the wild card)',
+    'Statistics restated as verdicts and tidy takeaways after every fact',
+    'Section titles with a colon and a subtitle; rule-of-three lists; polished, even, salesy tone throughout',
+    'Second-person tour-guide advice with no first-hand experience, anecdote or sensory detail',
+  ],
+  human_signs: [
+    'First-hand experience, anecdotes, digressions or opinions only a particular person would hold',
+    'Uneven or idiosyncratic rhythm, asides, humor, informal slips or typos',
+    'Neutral encyclopedic or reference style with citations, as in Wikipedia or wiki travel guides',
+  ],
+};
 
 const CRITERIA = {
-  ai_generated: 'The text was clearly produced by an AI language model with little human rewriting.',
-  human_written: 'The text was written by a person, possibly with light tool assistance.',
-  unclear: 'There is not enough evidence to tell.',
+  ai_generated: 'Shows several AI writing signs and few human signs: the text was produced by an AI language model.',
+  human_written: 'Shows human signs, or reads like ordinary human writing: the text was written by a person, possibly with light tool assistance.',
+  unclear: 'Too short or mixed to tell.',
 };
 
 const RAW_MAX = 2048;

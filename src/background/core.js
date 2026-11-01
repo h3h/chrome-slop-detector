@@ -9,6 +9,7 @@ import { tryConsume } from '../lib/ratelimit.js';
 import { isDenied } from '../lib/denylist.js';
 import { getProvider } from '../providers/index.js';
 import { ProviderError } from '../providers/errors.js';
+import { PROMPT_VERSION as JEV_PROMPT_VERSION } from '../providers/jev.js';
 
 export const HEURISTIC_MODEL = 'heuristic-v1';
 export const HEURISTIC_MIN_THRESHOLD = 0.95;
@@ -95,7 +96,8 @@ async function runClassify(msg, deps, onPending) {
   if (!impl || (provider === 'jev' && !hasKey(settings))) return unknown('no_provider', { words });
 
   const { text: sent, truncated } = truncateWords(msg.text, MAX_WORDS);
-  const key = cacheKey({ provider, model: base.model, textHash: await sha256Hex(sent) });
+  const keyModel = provider === 'jev' ? `${base.model}+p${JEV_PROMPT_VERSION}` : base.model;
+  const key = cacheKey({ provider, model: keyModel, textHash: await sha256Hex(sent) });
 
   let aiProbability;
   let cached = false;

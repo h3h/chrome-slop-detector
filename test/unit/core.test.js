@@ -95,6 +95,18 @@ describe('handleClassify', () => {
     expect(rateLog).toHaveLength(1);
   });
 
+  it('ignores a verdict cached under an older Jev prompt', async () => {
+    const deps = await setup();
+    await handleClassify(msg(), TAB, deps);
+    const { cache } = await deps.chrome.storage.local.get('cache');
+    const old = Object.fromEntries(Object.entries(cache).map(([k, v]) => [k.replace(/\+p\d+\|/, '|'), v]));
+    expect(Object.keys(old)).not.toEqual(Object.keys(cache));
+    await deps.chrome.storage.local.set({ cache: old });
+    const v = await handleClassify(msg(), TAB, deps);
+    expect(deps.fetch).toHaveBeenCalledTimes(2);
+    expect(v.cached).toBe(false);
+  });
+
   it('force bypasses the cache', async () => {
     const deps = await setup();
     await handleClassify(msg(), TAB, deps);
