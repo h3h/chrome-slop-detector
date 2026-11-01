@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Slop Flag</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Slop Flag</h1>
+      <p id="state" class="state" aria-live="polite">Loading…</p>
+      <dl class="details">
+        <dt>Score</dt>
+        <dd id="score"></dd>
+        <dt>Provider</dt>
+        <dd id="provider"></dd>
+        <dt>Source</dt>
+        <dd id="source"></dd>
+      </dl>
+      <div class="actions">
+        <button id="check" type="button">Check this page</button>
+        <button id="recheck" type="button" hidden>Re-check</button>
+        <button id="deny" type="button">Never check this site</button>
+        <button id="settings" type="button">Settings</button>
+      </div>
+      <p id="message" class="message" aria-live="polite"></p>
+      <p id="disclaimer" class="disclaimer">
+        Detectors produce false positives, especially on non-native English writers, formulaic news
+        (wire stories, earnings reports) and heavily edited text. A flag is a probability, not proof.
+      </p>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

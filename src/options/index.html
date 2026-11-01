@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Slop Flag settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Slop Flag settings</h1>
+      <section id="notice" class="notice">
+        <p>
+          <strong>What gets sent.</strong> In <strong>Auto</strong> mode, the text of every page that
+          qualifies (YouTube watch pages, and pages that look like articles, on sites not in the
+          never-check list) is sent to the selected provider as soon as it loads. In
+          <strong>Manual</strong> mode, text is sent only when you press “Check this page” in the
+          popup. The Heuristic provider runs offline and sends nothing.
+        </p>
+        <p>
+          <strong>Accuracy.</strong> Jev is a general-purpose text classifier, not a trained
+          AI-text detector. Its accuracy for detecting AI-written text is unverified, and its API
+          contract was taken from third-party write-ups. Treat flags as hints, not proof.
+        </p>
+      </section>
+      <form id="form" novalidate>
+        <label for="provider">Provider</label>
+        <select id="provider">
+          <option value="jev">Jev (TypeSafe)</option>
+          <option value="heuristic">Heuristic (offline)</option>
+        </select>
+
+        <label for="jevApiKey">Jev API key</label>
+        <input id="jevApiKey" type="password" autocomplete="off" spellcheck="false" />
+
+        <label for="jevEndpoint">Jev endpoint</label>
+        <input id="jevEndpoint" type="url" spellcheck="false" />
+
+        <label for="jevModel">Jev model</label>
+        <input id="jevModel" type="text" spellcheck="false" />
+
+        <label for="threshold">Flag threshold</label>
+        <input id="threshold" type="number" min="0.5" max="0.99" step="0.01" />
+
+        <label for="mode">Mode</label>
+        <select id="mode">
+          <option value="auto">Auto — check qualifying pages on load</option>
+          <option value="manual">Manual — only when I press “Check this page”</option>
+        </select>
+
+        <label for="denyList">Never check these sites (one host per line; subdomains included)</label>
+        <textarea id="denyList" rows="10" spellcheck="false"></textarea>
+
+        <div class="actions">
+          <button id="save" type="submit">Save</button>
+          <button id="test" type="button">Test provider</button>
+          <span id="status" class="status" role="status" aria-live="polite"></span>
+        </div>
+      </form>
+      <p class="hint">“Test provider” sends a fixed sample paragraph using the saved settings and shows the raw response.</p>
+      <pre id="testResult" class="test-result"></pre>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>
