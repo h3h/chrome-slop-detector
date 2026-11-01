@@ -28,7 +28,7 @@ classify({ text, kind, url, title }, { apiKey, endpoint, model, fetch, signal })
   provider: string, model?: string,
   raw?: object             // trimmed provider response, serialized ≤ 2 KB
 }>
-// throws ProviderError { code: 'auth' | 'rate_limit' | 'bad_response' | 'network' | 'timeout' }
+// throws ProviderError { code: 'auth' | 'provider_rate_limit' | 'bad_response' | 'network' | 'timeout' }
 ```
 
 1. **Jev (TypeSafe)** — default provider. Jev is a hosted non-generative classifier: you send
