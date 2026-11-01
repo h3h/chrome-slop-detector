@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Test video - YouTube</title>
+<script>
+  window.ytInitialPlayerResponse = {
+    videoDetails: { videoId: 'abc123xyz00', title: 'Test video', shortDescription: 'short' },
+    captions: {
+      playerCaptionsTracklistRenderer: {
+        captionTracks: [
+          { baseUrl: 'https://www.youtube.com/api/timedtext?v=abc123xyz00&lang=en', languageCode: 'en', name: { simpleText: 'English' } }
+        ]
+      }
+    }
+  };
+</script>
+</head>
+<body>
+<div id="page"><h1>Test video</h1><p>SYNTHETIC FIXTURE: minimal YouTube watch page for tests.</p></div>
+</body>
+</html>
