@@ -1,0 +1,374 @@
+// @vitest-environment jsdom
+// @vitest-environment-options {"url": "https://www.youtube.com/watch?v=vid123&t=5"}
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import {
+  MSG_NS,
+  videoIdFromUrl,
+  pickCaptionTrack,
+  parseJson3,
+  extractPlayerInfo,
+  isValidReply,
+} from '../../src/lib/youtube.js';
+import { requestPlayer, fetchTranscript, getYouTubeText } from '../../src/content/youtube-client.js';
+
+const json3 = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../fixtures/yt-json3.json'), 'utf8'));
+
+const TRACK_URL = 'https://www.youtube.com/api/timedtext?v=vid123&lang=en';
+
+function playerResponse({ videoId = 'vid123', title = 'A title', desc = 'A description', tracks } = {}) {
+  const pr = {
+    videoDetails: { videoId, title, shortDescription: desc, author: 'someone', viewCount: '9' },
+    streamingData: { formats: [{ url: 'https://example.invalid/stream' }] },
+  };
+  if (tracks) pr.captions = { playerCaptionsTracklistRenderer: { captionTracks: tracks } };
+  return pr;
+}
+
+// jsdom's window.postMessage never sets event.source (it is always null) and does not
+// structured-clone data. This shim reproduces browser same-window semantics (source ===
+// window, cloned data, targetOrigin filtering) so the production `event.source === win`
+// check is exercised as-is rather than bypassed.
+const nativePostMessage = window.postMessage;
+function installFaithfulPostMessage(intercept) {
+  window.postMessage = function (data, targetOrigin) {
+    if (targetOrigin !== '*' && new URL(targetOrigin).origin !== window.location.origin) return;
+    const cloned = structuredClone(data);
+    if (intercept && intercept(cloned)) return;
+    setTimeout(() => {
+      window.dispatchEvent(new MessageEvent('message', { data: cloned, source: window, origin: window.location.origin }));
+    }, 0);
+  };
+}
+function dispatchForged(data, source) {
+  window.dispatchEvent(new MessageEvent('message', { data, source }));
+}
+
+function okFetch(body) {
+  return vi.fn(async () => ({ ok: true, status: 200, json: async () => body }));
+}
+
+describe('videoIdFromUrl', () => {
+  it('reads v on youtube.com/watch', () => {
+    expect(videoIdFromUrl('https://www.youtube.com/watch?v=abc123&t=10')).toBe('abc123');
+    expect(videoIdFromUrl('https://m.youtube.com/watch?v=xyz')).toBe('xyz');
+  });
+  it('rejects shorts, other paths, other hosts and garbage', () => {
+    expect(videoIdFromUrl('https://www.youtube.com/shorts/abc123')).toBeNull();
+    expect(videoIdFromUrl('https://www.youtube.com/watch')).toBeNull();
+    expect(videoIdFromUrl('https://www.youtube.com/results?v=abc')).toBeNull();
+    expect(videoIdFromUrl('https://example.com/watch?v=abc123')).toBeNull();
+    expect(videoIdFromUrl('https://notyoutube.com/watch?v=abc123')).toBeNull();
+    expect(videoIdFromUrl('not a url')).toBeNull();
+  });
+});
+
+describe('pickCaptionTrack', () => {
+  const manualEn = { baseUrl: 'u1', languageCode: 'en' };
+  const asrEn = { baseUrl: 'u2', languageCode: 'en', kind: 'asr' };
+  const de = { baseUrl: 'u3', languageCode: 'de' };
+  it('prefers manual english over asr english', () => {
+    expect(pickCaptionTrack([asrEn, de, manualEn])).toEqual({ track: manualEn, asr: false });
+  });
+  it('accepts regional english', () => {
+    const gb = { baseUrl: 'u4', languageCode: 'en-GB' };
+    expect(pickCaptionTrack([de, gb])).toEqual({ track: gb, asr: false });
+  });
+  it('returns null with no english track', () => {
+    expect(pickCaptionTrack([de])).toBeNull();
+    expect(pickCaptionTrack([])).toBeNull();
+    expect(pickCaptionTrack(undefined)).toBeNull();
+  });
+  it('falls back to asr english and flags it', () => {
+    expect(pickCaptionTrack([de, asrEn])).toEqual({ track: asrEn, asr: true });
+  });
+});
+
+describe('parseJson3', () => {
+  it('joins segs within events and events with spaces, normalized', () => {
+    expect(parseJson3(json3)).toBe('Hello world again');
+  });
+  it('returns empty string when there is nothing', () => {
+    expect(parseJson3({})).toBe('');
+    expect(parseJson3(null)).toBe('');
+  });
+});
+
+describe('extractPlayerInfo', () => {
+  it('extracts only the four fields, with captions', () => {
+    const tracks = [{ baseUrl: TRACK_URL, languageCode: 'en', kind: 'asr', name: { simpleText: 'English' }, vssId: 'a.en' }];
+    expect(extractPlayerInfo(playerResponse({ tracks }))).toEqual({
+      videoId: 'vid123',
+      title: 'A title',
+      shortDescription: 'A description',
+      captionTracks: [{ baseUrl: TRACK_URL, languageCode: 'en', kind: 'asr', name: 'English' }],
+    });
+  });
+  it('defaults captionTracks to [] without captions', () => {
+    expect(extractPlayerInfo(playerResponse())).toEqual({
+      videoId: 'vid123',
+      title: 'A title',
+      shortDescription: 'A description',
+      captionTracks: [],
+    });
+  });
+  it('returns null without videoDetails', () => {
+    expect(extractPlayerInfo(undefined)).toBeNull();
+    expect(extractPlayerInfo({})).toBeNull();
+  });
+});
+
+describe('isValidReply', () => {
+  const data = { [MSG_NS]: 'n1', type: 'player' };
+  it('requires same-window source, nonce and type', () => {
+    expect(isValidReply({ source: window, data }, 'n1', window)).toBe(true);
+    expect(isValidReply({ source: null, data }, 'n1', window)).toBe(false);
+    expect(isValidReply({ source: {}, data }, 'n1', window)).toBe(false);
+    expect(isValidReply({ source: window, data }, 'n2', window)).toBe(false);
+    expect(isValidReply({ source: window, data: { ...data, type: 'get-player' } }, 'n1', window)).toBe(false);
+    expect(isValidReply({ source: window, data: null }, 'n1', window)).toBe(false);
+    expect(isValidReply({ source: window, data: 'str' }, 'n1', window)).toBe(false);
+  });
+});
+
+describe('MAIN-world bridge round trip', () => {
+  beforeEach(async () => {
+    installFaithfulPostMessage();
+    await import('../../src/content/yt-main.js');
+  });
+  afterEach(() => {
+    window.postMessage = nativePostMessage;
+    delete window.ytInitialPlayerResponse;
+    document.body.replaceChildren();
+  });
+
+  it('confirms jsdom leaves event.source null (why the shim exists)', async () => {
+    window.postMessage = nativePostMessage;
+    const got = new Promise((resolve) => window.addEventListener('message', (e) => resolve(e), { once: true }));
+    window.postMessage({ probe: 1 }, '*');
+    expect((await got).source).toBeNull();
+  });
+
+  it('returns info from ytInitialPlayerResponse, never the full response', async () => {
+    const tracks = [{ baseUrl: TRACK_URL, languageCode: 'en' }];
+    window.ytInitialPlayerResponse = playerResponse({ tracks });
+    const replies = [];
+    const spy = (e) => { if (e.data?.type === 'player') replies.push(e.data); };
+    window.addEventListener('message', spy);
+    const info = await requestPlayer(window);
+    window.removeEventListener('message', spy);
+    expect(info).toEqual({
+      videoId: 'vid123',
+      title: 'A title',
+      shortDescription: 'A description',
+      captionTracks: [{ baseUrl: TRACK_URL, languageCode: 'en' }],
+    });
+    expect(Object.keys(replies[0]).sort()).toEqual([MSG_NS, 'captionTracks', 'shortDescription', 'title', 'type', 'videoId'].sort());
+  });
+
+  it('prefers movie_player.getPlayerResponse over the stale initial response', async () => {
+    window.ytInitialPlayerResponse = playerResponse({ videoId: 'stale', title: 'Old' });
+    const el = document.createElement('div');
+    el.id = 'movie_player';
+    el.getPlayerResponse = () => playerResponse({ videoId: 'fresh', title: 'New' });
+    document.body.append(el);
+    const info = await requestPlayer(window);
+    expect(info.videoId).toBe('fresh');
+    expect(info.title).toBe('New');
+  });
+
+  it('MAIN side ignores requests not from its own window', async () => {
+    window.ytInitialPlayerResponse = playerResponse();
+    const posted = vi.fn();
+    window.postMessage = posted;
+    dispatchForged({ [MSG_NS]: 'n', type: 'get-player' }, null);
+    expect(posted).not.toHaveBeenCalled();
+    dispatchForged({ [MSG_NS]: 'n', type: 'get-player' }, window);
+    expect(posted).toHaveBeenCalledWith(expect.objectContaining({ [MSG_NS]: 'n', type: 'player', videoId: 'vid123' }), 'https://www.youtube.com');
+  });
+
+  it('times out to null when no player data exists', async () => {
+    expect(await requestPlayer(window, { timeoutMs: 50 })).toBeNull();
+  });
+
+  it('removes its listener after resolving', async () => {
+    window.ytInitialPlayerResponse = playerResponse();
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+    await requestPlayer(window);
+    const mine = add.mock.calls.find((c) => c[0] === 'message')[1];
+    expect(remove.mock.calls.some((c) => c[0] === 'message' && c[1] === mine)).toBe(true);
+    add.mockRestore();
+    remove.mockRestore();
+  });
+});
+
+describe('requestPlayer rejects forged replies', () => {
+  afterEach(() => { window.postMessage = nativePostMessage; });
+
+  it('posts the request to its own origin', async () => {
+    const calls = [];
+    window.postMessage = (data, origin) => calls.push([data, origin]);
+    await requestPlayer(window, { timeoutMs: 10 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0].type).toBe('get-player');
+    expect(typeof calls[0][0][MSG_NS]).toBe('string');
+    expect(calls[0][0][MSG_NS].length).toBeGreaterThan(10);
+    expect(calls[0][1]).toBe('https://www.youtube.com');
+  });
+
+  it('ignores wrong nonce and foreign source, accepts only the valid one', async () => {
+    const info = { videoId: 'vid123', title: 'T', shortDescription: 'D', captionTracks: [] };
+    let nonce;
+    installFaithfulPostMessage((data) => { nonce = data[MSG_NS]; return true; });
+    const p = requestPlayer(window, { timeoutMs: 200 });
+    dispatchForged({ [MSG_NS]: 'wrong', type: 'player', ...info, title: 'forged-nonce' }, window);
+    dispatchForged({ [MSG_NS]: nonce, type: 'player', ...info, title: 'forged-source' }, null);
+    dispatchForged({ [MSG_NS]: nonce, type: 'player', ...info }, window);
+    expect(await p).toEqual(info);
+  });
+
+  it('times out to null when only forged replies arrive', async () => {
+    let nonce;
+    installFaithfulPostMessage((data) => { nonce = data[MSG_NS]; return true; });
+    const p = requestPlayer(window, { timeoutMs: 50 });
+    dispatchForged({ [MSG_NS]: 'wrong', type: 'player', videoId: 'vid123' }, window);
+    dispatchForged({ [MSG_NS]: nonce, type: 'player', videoId: 'vid123' }, null);
+    expect(await p).toBeNull();
+  });
+});
+
+describe('fetchTranscript', () => {
+  it('fetches baseUrl + &fmt=json3 with credentials and parses it', async () => {
+    const f = okFetch(json3);
+    expect(await fetchTranscript({ baseUrl: TRACK_URL }, f)).toBe('Hello world again');
+    expect(f).toHaveBeenCalledWith(TRACK_URL + '&fmt=json3', expect.objectContaining({ credentials: 'include' }));
+  });
+  it('returns empty string on any failure', async () => {
+    expect(await fetchTranscript({ baseUrl: TRACK_URL }, vi.fn(async () => { throw new Error('net'); }))).toBe('');
+    expect(await fetchTranscript({ baseUrl: TRACK_URL }, vi.fn(async () => ({ ok: false, status: 404, json: async () => json3 })))).toBe('');
+    expect(await fetchTranscript({ baseUrl: TRACK_URL }, vi.fn(async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('empty'); } })))).toBe('');
+    expect(await fetchTranscript({}, okFetch(json3))).toBe('');
+  });
+  it('times out to empty string when the fetch never settles', async () => {
+    const f = vi.fn((url, opts) => new Promise((_, reject) => {
+      opts.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    }));
+    expect(await fetchTranscript({ baseUrl: TRACK_URL }, f, { timeoutMs: 20 })).toBe('');
+  });
+  it('times out even when the fetch ignores the signal', async () => {
+    const f = vi.fn(() => new Promise(() => {}));
+    expect(await fetchTranscript({ baseUrl: TRACK_URL }, f, { timeoutMs: 20 })).toBe('');
+  });
+  it('honours an external abort signal and cleans up its listener', async () => {
+    const ac = new AbortController();
+    const remove = vi.spyOn(ac.signal, 'removeEventListener');
+    const f = vi.fn(() => new Promise(() => {}));
+    const p = fetchTranscript({ baseUrl: TRACK_URL }, f, { signal: ac.signal, timeoutMs: 10000 });
+    ac.abort();
+    expect(await p).toBe('');
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+    const pre = new AbortController();
+    pre.abort();
+    const g = okFetch(json3);
+    expect(await fetchTranscript({ baseUrl: TRACK_URL }, g, { signal: pre.signal })).toBe('');
+    expect(g).not.toHaveBeenCalled();
+  });
+  it('sets fmt=json3 via URL params, replacing any existing fmt', async () => {
+    const f = okFetch(json3);
+    await fetchTranscript({ baseUrl: 'https://www.youtube.com/api/timedtext?v=a&fmt=srv3' }, f);
+    expect(f.mock.calls[0][0]).toBe('https://www.youtube.com/api/timedtext?v=a&fmt=json3');
+  });
+  it('refuses non-youtube baseUrls without fetching', async () => {
+    const f = okFetch(json3);
+    expect(await fetchTranscript({ baseUrl: 'https://evil.example/x?y=1' }, f)).toBe('');
+    expect(f).not.toHaveBeenCalled();
+  });
+});
+
+describe('getYouTubeText', () => {
+  beforeEach(async () => {
+    installFaithfulPostMessage();
+    await import('../../src/content/yt-main.js');
+  });
+  afterEach(() => {
+    window.postMessage = nativePostMessage;
+    delete window.ytInitialPlayerResponse;
+  });
+
+  it('uses the transcript when the fetch returns captions', async () => {
+    window.ytInitialPlayerResponse = playerResponse({ tracks: [{ baseUrl: TRACK_URL, languageCode: 'en', kind: 'asr' }] });
+    expect(await getYouTubeText(window, okFetch(json3))).toEqual({
+      text: 'Hello world again', title: 'A title', source: 'transcript', asr: true, videoId: 'vid123',
+    });
+  });
+
+  it('falls back to title + description when the fetch fails', async () => {
+    window.ytInitialPlayerResponse = playerResponse({ tracks: [{ baseUrl: TRACK_URL, languageCode: 'en' }] });
+    const f = vi.fn(async () => { throw new Error('net'); });
+    expect(await getYouTubeText(window, f)).toEqual({
+      text: 'A title\n\nA description', title: 'A title', source: 'description', asr: false, videoId: 'vid123',
+    });
+  });
+
+  it('falls back to description without fetching when there is no english track', async () => {
+    window.ytInitialPlayerResponse = playerResponse({ tracks: [{ baseUrl: TRACK_URL, languageCode: 'de' }] });
+    const f = okFetch(json3);
+    const r = await getYouTubeText(window, f);
+    expect(r.source).toBe('description');
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('returns null after retrying when the reply videoId keeps not matching the URL', async () => {
+    window.ytInitialPlayerResponse = playerResponse({ videoId: 'other' });
+    const requests = vi.fn();
+    const spy = (e) => { if (e.data?.type === 'get-player') requests(); };
+    window.addEventListener('message', spy);
+    const r = await getYouTubeText(window, okFetch(json3), { retryDelayMs: 1 });
+    window.removeEventListener('message', spy);
+    expect(r).toBeNull();
+    expect(requests).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries a mismatched reply and succeeds once the player catches up', async () => {
+    let n = 0;
+    const el = document.createElement('div');
+    el.id = 'movie_player';
+    el.getPlayerResponse = () => playerResponse({ videoId: n++ === 0 ? 'previous' : 'vid123' });
+    document.body.append(el);
+    try {
+      const r = await getYouTubeText(window, okFetch(json3), { retryDelayMs: 1 });
+      expect(r).toMatchObject({ videoId: 'vid123', source: 'description' });
+      expect(n).toBe(2);
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('returns null when the URL changes while the transcript loads', async () => {
+    window.ytInitialPlayerResponse = playerResponse({ tracks: [{ baseUrl: TRACK_URL, languageCode: 'en' }] });
+    const original = window.location.href;
+    const f = vi.fn(async () => {
+      window.history.replaceState(null, '', '/watch?v=navigated');
+      return { ok: true, status: 200, json: async () => json3 };
+    });
+    try {
+      expect(await getYouTubeText(window, f)).toBeNull();
+    } finally {
+      window.history.replaceState(null, '', original);
+    }
+  });
+
+  it('forwards the abort signal and returns null when aborted', async () => {
+    window.ytInitialPlayerResponse = playerResponse({ tracks: [{ baseUrl: TRACK_URL, languageCode: 'en' }] });
+    const ac = new AbortController();
+    const f = vi.fn((url, opts) => new Promise((_, reject) => {
+      opts.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      setTimeout(() => ac.abort(), 5);
+    }));
+    expect(await getYouTubeText(window, f, { signal: ac.signal })).toBeNull();
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+});
