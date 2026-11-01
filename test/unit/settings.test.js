@@ -42,6 +42,25 @@ describe('settings', () => {
     expect('bogus' in s).toBe(false);
     await expect(saveSettings(c.storage.local, { denyList: 'a.com' })).rejects.toThrow('Deny list must be a list');
   });
+  it('blank or non-string jevModel falls back to the default model', async () => {
+    const c = createChromeStub();
+    for (const jevModel of ['', '   ', null, 42]) {
+      const s = await saveSettings(c.storage.local, { jevModel });
+      expect(s.jevModel).toBe(DEFAULT_SETTINGS.jevModel);
+    }
+    expect((await saveSettings(c.storage.local, { jevModel: ' jev-latest ' })).jevModel).toBe('jev-latest');
+    await c.storage.local.set({ settings: { jevModel: '' } });
+    expect((await saveSettings(c.storage.local, { threshold: 0.9 })).jevModel).toBe(DEFAULT_SETTINGS.jevModel);
+  });
+  it('has no noticeAcknowledged field and drops it from stored settings on save', async () => {
+    expect('noticeAcknowledged' in DEFAULT_SETTINGS).toBe(false);
+    const c = createChromeStub();
+    await c.storage.local.set({ settings: { noticeAcknowledged: true, jevApiKey: 'k' } });
+    const s = await saveSettings(c.storage.local, { threshold: 0.9 });
+    expect('noticeAcknowledged' in s).toBe(false);
+    expect('noticeAcknowledged' in (await c.storage.local.get('settings')).settings).toBe(false);
+    expect(s.jevApiKey).toBe('k');
+  });
   it('loadSettings result is isolated from defaults', async () => {
     const c = createChromeStub();
     const s = await loadSettings(c.storage.local);

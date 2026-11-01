@@ -6,6 +6,7 @@ import { verdict, MIN_WORDS, MIN_WORDS_TRANSCRIPT, MAX_WORDS } from '../lib/poli
 import { loadSettings, saveSettings, validateEndpoint } from '../lib/settings.js';
 import { cacheKey, cacheGet, cachePut } from '../lib/cache.js';
 import { tryConsume } from '../lib/ratelimit.js';
+import { isDenied } from '../lib/denylist.js';
 import { getProvider } from '../providers/index.js';
 import { ProviderError } from '../providers/errors.js';
 
@@ -82,7 +83,9 @@ async function runClassify(msg, deps, onPending) {
     url: msg.url,
     title: typeof msg.title === 'string' ? msg.title : undefined,
   };
-  const unknown = (reason, extra = {}) => ({ ...base, ...extra, state: 'unknown', reason, ts: nowOf(deps) });
+  const unknown = (reason, extra = {}) => ({
+    ...base, ...extra, state: 'unknown', reason, threshold: settings.threshold, ts: nowOf(deps)
+  });
 
   const words = countWords(msg.text);
   const minWords = source === 'transcript' ? MIN_WORDS_TRANSCRIPT : MIN_WORDS;
@@ -165,6 +168,47 @@ export function handleClassify(msg, tabId, deps) {
   return entry.promise;
 }
 
+function httpUrl(u) {
+  if (typeof u !== 'string') return null;
+  try {
+    const parsed = new URL(u);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// The page URL stored with a classify result: the message's URL (what the content script
+// extracted from) when it is http(s), else the sender tab's URL. The popup compares it with
+// the tab URL to drop stale views.
+export function viewUrlFor(msg, sender) {
+  return httpUrl(msg?.url) ? msg.url : sender?.tab?.url;
+}
+
+// SW entry point for content-script classify requests. Re-checks the deny list so a stale
+// content script (deny list changed after its config was read) never sends text for a denied
+// site. Denied if EITHER the tab's host (set by Chrome) or the message URL's host is denied.
+// Denied requests touch neither the provider nor tab state.
+export async function classifyForSender(msg, sender, deps) {
+  validateClassifyMsg(msg);
+  const url = viewUrlFor(msg, sender);
+  if (!httpUrl(url)) throw new Error('Invalid classify message: url must be http(s)');
+  const hosts = [httpUrl(sender?.tab?.url), httpUrl(msg.url)].filter(Boolean).map((u) => u.hostname);
+  const settings = await loadSettings(deps.chrome.storage.local);
+  if (hosts.some((h) => isDenied(h, settings.denyList || []))) {
+    return {
+      state: 'unknown',
+      reason: 'denied',
+      provider: settings.provider,
+      source: msg.source || (msg.kind === 'youtube' ? 'description' : 'article'),
+      threshold: settings.threshold,
+      url,
+      ts: nowOf(deps)
+    };
+  }
+  return handleClassify({ ...msg, url }, Number.isInteger(sender?.tab?.id) ? sender.tab.id : null, deps);
+}
+
 export async function getTabState(tabId, deps) {
   const key = tabKey(tabId);
   const { [key]: stored } = await deps.chrome.storage.session.get(key);
@@ -195,13 +239,17 @@ export async function clearTabStateIfUrlChanged(tabId, url, deps) {
   if (stored && stripHash(stored.url) === target) return false;
   const entry = inflightOf(deps).get(tabId);
   if (entry && stripHash(entry.url) === target) return false;
+  await clearTabStateAndBadge(tabId, deps);
+  return true;
+}
+
+export async function clearTabStateAndBadge(tabId, deps) {
   await clearTabState(tabId, deps);
   try {
     await deps.chrome.action.setBadgeText({ tabId, text: '' });
   } catch {
     // Tab gone.
   }
-  return true;
 }
 
 // Re-derive every tab's badge from stored probabilities (after a threshold change).

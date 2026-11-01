@@ -61,7 +61,6 @@ export function createOptions({ chrome, doc }) {
     const patch = {
       provider: el.provider.value,
       jevApiKey,
-      jevModel: el.jevModel.value.trim(),
       threshold,
       mode: el.mode.value,
       denyList: [...new Set(lines.map(parseHost))]
@@ -69,8 +68,9 @@ export function createOptions({ chrome, doc }) {
     // Empty endpoint field: keep the stored endpoint rather than saving an invalid one.
     const jevEndpoint = el.jevEndpoint.value.trim();
     if (jevEndpoint) patch.jevEndpoint = jevEndpoint;
-    // The notice sits on this form, so saving a key here means it was shown.
-    if (jevApiKey) patch.noticeAcknowledged = true;
+    // Blank model field: keep the stored model (saveSettings also falls back to the default).
+    const jevModel = el.jevModel.value.trim();
+    if (jevModel) patch.jevModel = jevModel;
     return patch;
   }
 

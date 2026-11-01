@@ -49,10 +49,15 @@ classify({ text, kind, url, title }, { apiKey, endpoint, model, fetch, signal })
    silent fallback. ~10 stock phrases ("delve", "tapestry", "it's important to note",
    "in today's fast-paced world", "navigate the complexities", "a testament to", "in conclusion",
    "unlock the potential", "ever-evolving landscape", "embark on a journey") plus 3 structural
-   signals (em-dash density per 100 words, "not just X, but Y" constructions, low
-   sentence-length coefficient of variation). Each signal is a tell *category*. Score formula is
-   defined in the plan and deterministic. Flags only when ≥ 3 distinct categories fire **and**
-   score ≥ 0.95. UI labels it "heuristic".
+   signals. Five tell *categories* (escalation E4): `stock_phrases` (≥ 2 distinct stock
+   phrases), `stock_phrases_heavy` (≥ 4 distinct stock phrases), `em_dash` (≥ 1.0 em-dash per
+   100 words), `not_just_but` (≥ 2 "not just X, but Y" constructions), `uniform_sentences`
+   (sentence-length coefficient of variation < 0.25 over ≥ 15 sentences of ≥ 3 words).
+   Score = `1 − 0.5^n` for n categories, halved when n < 3; deterministic (formula in the plan).
+   Flags only when score ≥ 0.95 (the SW floors the heuristic threshold at 0.95), which requires
+   **all five** categories: ≥ 4 distinct stock phrases plus all three structural signals.
+   UI labels it "heuristic". Options says it is very conservative and that "no flag" does not
+   mean human-written.
 3. **Mock** — test-only behaviour is just the Jev adapter pointed at a local HTTP server; no
    separate provider.
 
@@ -63,11 +68,14 @@ No provider configured (Jev selected, no key) → state `unknown` reason `no_pro
 | Page | Gate | Text sent |
 |---|---|---|
 | YouTube watch (`https://www.youtube.com/watch*`) | URL | English transcript if obtainable, else `title + "\n\n" + description` |
-| Article / blog / news | `isProbablyReaderable(document)` then `Readability.parse(document.cloneNode(true))` | `title + "\n\n" + textContent` |
+| Article / blog / news | `isProbablyReaderable(document)` then `Readability.parse(document.cloneNode(true))`; pages with > 20,000 elements (`MAX_ELEMS`) are skipped before Readability (popup: "No readable text found"; escalation E7) | `title + "\n\n" + textContent` |
 | Anything else | — | nothing, no state |
 
 Global skips: non-http(s) schemes; top frame only; deny-listed host; `<html lang>` set and not
-starting with `en`.
+starting with `en`. Before classifying, the SW re-checks the deny list against both the
+`sender.tab.url` host and the message `url` host; if either is denied it answers `unknown`
+reason `denied` (no provider call, no stored state). The stored view URL is the message `url`
+when it is http(s), else `sender.tab.url`.
 
 - `normalize(text)`: strip zero-width chars, collapse whitespace, trim. Words = count of `/\S+/g`.
 - Minimum 250 words (transcripts 300); below → `unknown` reason `too_short`.
@@ -80,8 +88,15 @@ starting with `en`.
   `event.source === window` and the nonce. Triggers: initial `document_idle` and every
   `yt-navigate-finish`, deduped by `videoId`; ignore replies whose `videoId` ≠ URL `v`.
 - Caption track: `languageCode` starts with `en`; prefer `kind !== 'asr'`. Fetch
-  `baseUrl + '&fmt=json3'`; text = `events[].segs[].utf8` joined with spaces. Any failure →
-  description fallback; popup shows "transcript unavailable". ASR transcript → threshold +0.05.
+  `baseUrl + '&fmt=json3'`; text = `events[].segs[].utf8` joined with spaces. Description
+  fallback only when the video has no caption tracks, or the English track's fetch fails or
+  yields no text; popup shows "transcript unavailable". If no English track is usable and at
+  least one track has a non-English `languageCode`, the video is treated as non-English and
+  nothing is classified (escalation E6; a popup check reports skipped `lang`). On watch pages
+  the `run-check` reply waits until the text is obtained; no player reply or a videoId
+  mismatch replies `unavailable`. The
+  `<html lang>` gate is not applied on watch pages (it follows the UI locale; E5). ASR
+  transcript → threshold +0.05.
   Expect most YouTube pages without transcripts to end `too_short`; that's correct behaviour.
 
 ## Flag policy
@@ -139,9 +154,11 @@ src/options/            plain DOM; provider, key, endpoint, model, threshold, mo
 - Messages (content → SW): `{type:'classify', kind, text, title, url, asr, source, force?}` →
   response `{state, reason?, aiProbability?, threshold, provider, source}`. Content → SW also: `get-content-config` → `{mode, denyList}` only (never the key). Content-script
   senders may only send `classify` and `get-content-config`; all other messages require an
-  extension-page sender. Popup →
+  extension-page sender; `get-settings`, `save-settings` and `test-provider` only the Options
+  page (sender URL protocol + host + path exactly `options/index.html`; query/fragment ignored). Popup →
   SW: `get-tab-state`, `check-tab` (Manual / Re-check with `force` bypassing cache, still rate
-  limited), `deny-host`. SW → content: `run-check` (popup button); content replies `{ok:true, skipped: null|'denied'|'lang'|'scheme'|'not_article'|'no_text'|'unavailable'}`, relayed to the popup by `check-tab`.
+  limited), `deny-host {host, tabId}` (SW clears that tab's state and badge; the popup then
+  sends `check-tab` so the content script hits the deny gate and removes its banner). SW → content: `run-check` (popup button); content replies `{ok:true, skipped: null|'denied'|'lang'|'scheme'|'not_article'|'no_text'|'unavailable'}`, relayed to the popup by `check-tab`.
 
 ## Testing
 

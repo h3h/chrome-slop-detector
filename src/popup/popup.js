@@ -153,6 +153,11 @@ export function createPopup({ chrome, doc, win }) {
     return false;
   }
 
+  function showSkipped(reason) {
+    el.state.textContent = `This page isn't checked: ${SKIP_TEXT[reason] || reason}`;
+    el.state.dataset.state = 'none';
+  }
+
   async function check(force) {
     if (busy || tab.id == null) return;
     setBusy(true);
@@ -168,8 +173,7 @@ export function createPopup({ chrome, doc, win }) {
         return;
       }
       if (res && typeof res.skipped === 'string' && res.skipped) {
-        el.state.textContent = `This page isn't checked: ${SKIP_TEXT[res.skipped] || res.skipped}`;
-        el.state.dataset.state = 'none';
+        showSkipped(res.skipped);
         return;
       }
       // Re-check (force) always produces a fresh result, so never accept an unchanged ts.
@@ -192,9 +196,18 @@ export function createPopup({ chrome, doc, win }) {
       setMessage('This page has no site to add.');
       return;
     }
-    const res = await send({ type: 'deny-host', host });
-    if (res && typeof res.error === 'string') setMessage(`Could not add ${host}: ${res.error}`);
-    else setMessage(`${host} will not be checked again.`);
+    const res = await send({ type: 'deny-host', host, tabId: tab.id });
+    if (res && typeof res.error === 'string') {
+      setMessage(`Could not add ${host}: ${res.error}`);
+      return;
+    }
+    setMessage(`${host} will not be checked again.`);
+    // The SW cleared this tab's state and badge; re-run the content script so it hits the
+    // deny gate and removes its banner.
+    lastView = null;
+    render(null);
+    const r = await send({ type: 'check-tab', tabId: tab.id, force: false });
+    if (r && typeof r.skipped === 'string' && r.skipped) showSkipped(r.skipped);
   }
 
   async function resolveTab() {

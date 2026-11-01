@@ -45,7 +45,7 @@ test('manual mode: zero calls on load, popup "Check this page" classifies', asyn
 test('options page saves key and threshold to storage', async () => {
   const { context, sw, extensionId } = ctx;
   // Mock endpoint and no key: nothing on this page can reach a real provider.
-  await seedSettings(sw, srv.origin, { jevApiKey: '', jevModel: 'jev-test-model', noticeAcknowledged: false });
+  await seedSettings(sw, srv.origin, { jevApiKey: '', jevModel: 'jev-test-model' });
   const page = await context.newPage();
   await page.goto(`chrome-extension://${extensionId}/options/index.html`);
   // Loaded once the form is filled from the seeded settings.
@@ -61,7 +61,7 @@ test('options page saves key and threshold to storage', async () => {
   const stored = await sw.evaluate(() => chrome.storage.local.get('settings').then((r) => r.settings));
   expect(stored.threshold).toBe(0.8);
   expect(stored.jevApiKey).toBe('my-secret-key');
-  expect(stored.noticeAcknowledged).toBe(true);
+  expect('noticeAcknowledged' in stored).toBe(false);
   expect(stored.jevEndpoint).toBe(`${srv.origin}/jev`);
   expect(srv.calls).toHaveLength(0);
 });

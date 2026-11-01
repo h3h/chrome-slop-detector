@@ -313,12 +313,64 @@ describe('getYouTubeText', () => {
     });
   });
 
-  it('falls back to description without fetching when there is no english track', async () => {
-    window.ytInitialPlayerResponse = playerResponse({ tracks: [{ baseUrl: TRACK_URL, languageCode: 'de' }] });
+  // E6: caption tracks exist but none is English -> the video is not English; send nothing.
+  it("returns {skip:'lang'} without fetching when caption tracks exist but none is English", async () => {
+    window.ytInitialPlayerResponse = playerResponse({
+      tracks: [{ baseUrl: TRACK_URL, languageCode: 'de' }, { baseUrl: TRACK_URL, languageCode: 'fr', kind: 'asr' }],
+    });
     const f = okFetch(json3);
-    const r = await getYouTubeText(window, f);
-    expect(r.source).toBe('description');
+    expect(await getYouTubeText(window, f)).toEqual({ skip: 'lang' });
     expect(f).not.toHaveBeenCalled();
+  });
+
+  it('returns null when the player bridge never answers', async () => {
+    // No ytInitialPlayerResponse and no #movie_player: the MAIN script sends no reply.
+    const f = okFetch(json3);
+    expect(await getYouTubeText(window, f, { requestTimeoutMs: 20 })).toBeNull();
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  // The MAIN script filters malformed tracks, but the client must not rely on it (a reply can
+  // be forged by page script), so these reply directly with raw tracks.
+  function replyWithTracks(captionTracks) {
+    installFaithfulPostMessage((data) => {
+      if (data?.type !== 'get-player') return false;
+      setTimeout(() => dispatchForged({
+        [MSG_NS]: data[MSG_NS], type: 'player', videoId: 'vid123', title: 'A title', shortDescription: 'A description', captionTracks,
+      }, window), 0);
+      return true;
+    });
+  }
+
+  it('malformed tracks with no well-formed non-English one fall back to the description', async () => {
+    replyWithTracks([{ languageCode: 'en' }, { baseUrl: TRACK_URL }, { baseUrl: TRACK_URL, languageCode: 7 }, null]);
+    const f = okFetch(json3);
+    expect(await getYouTubeText(window, f)).toMatchObject({ source: 'description', text: 'A title\n\nA description' });
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("a well-formed non-English track next to a malformed English one skips as 'lang'", async () => {
+    replyWithTracks([{ languageCode: 'en' }, { baseUrl: TRACK_URL, languageCode: 'es' }]);
+    const f = okFetch(json3);
+    expect(await getYouTubeText(window, f)).toEqual({ skip: 'lang' });
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('falls back to description when there are no caption tracks', async () => {
+    window.ytInitialPlayerResponse = playerResponse();
+    const f = okFetch(json3);
+    expect(await getYouTubeText(window, f)).toEqual({
+      text: 'A title\n\nA description', title: 'A title', source: 'description', asr: false, videoId: 'vid123',
+    });
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('falls back to description when the English track returns no text', async () => {
+    window.ytInitialPlayerResponse = playerResponse({ tracks: [{ baseUrl: TRACK_URL, languageCode: 'en' }] });
+    const f = okFetch({ events: [] });
+    const r = await getYouTubeText(window, f);
+    expect(r).toMatchObject({ source: 'description', asr: false });
+    expect(f).toHaveBeenCalledTimes(1);
   });
 
   it('returns null after retrying when the reply videoId keeps not matching the URL', async () => {

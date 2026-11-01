@@ -68,11 +68,28 @@ describe('popup', () => {
     expect(text('#disclaimer')).toMatch(/false positives/);
   });
 
-  it('Never check this site sends deny-host with the tab hostname', async () => {
-    const { sent } = await load();
+  it('Never check this site sends deny-host with the tab hostname and tab id, then check-tab', async () => {
+    const { sent } = await load({
+      onMessage: (m) => (m.type === 'check-tab' ? { ok: true, skipped: 'denied' } : undefined)
+    });
     document.querySelector('#deny').click();
-    await vi.waitFor(() => expect(sent).toContainEqual({ type: 'deny-host', host: 'news.example.com' }));
     await vi.waitFor(() => expect(text('#message')).toBe('news.example.com will not be checked again.'));
+    const i = sent.findIndex((m) => m.type === 'deny-host');
+    expect(sent[i]).toEqual({ type: 'deny-host', host: 'news.example.com', tabId: 5 });
+    expect(sent.slice(i + 1)).toContainEqual({ type: 'check-tab', tabId: 5, force: false });
+    await vi.waitFor(() => expect(text('#state')).toBe("This page isn't checked: This site is on your never-check list"));
+    expect(text('#score')).toBe('');
+    expect(document.querySelector('#recheck').hidden).toBe(true);
+  });
+
+  it('a failed deny-host does not send check-tab', async () => {
+    const { sent } = await load({
+      onMessage: (m) => (m.type === 'deny-host' ? { error: 'Invalid host' } : undefined)
+    });
+    document.querySelector('#deny').click();
+    await vi.waitFor(() => expect(text('#message')).toBe('Could not add news.example.com: Invalid host'));
+    expect(sent.filter((m) => m.type === 'check-tab')).toHaveLength(0);
+    expect(text('#state')).toContain('Flagged');
   });
 
   it('Settings opens the options page', async () => {

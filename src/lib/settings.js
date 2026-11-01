@@ -8,8 +8,7 @@ export const DEFAULT_SETTINGS = {
   jevModel: 'jev-1.13.0',
   threshold: DEFAULT_THRESHOLD,
   mode: 'auto', // 'auto' | 'manual'
-  denyList: [...DEFAULT_DENY],
-  noticeAcknowledged: false
+  denyList: [...DEFAULT_DENY]
 };
 
 const PROVIDERS = ['jev', 'heuristic'];
@@ -38,7 +37,10 @@ export async function saveSettings(storageArea, patch) {
     if (v !== undefined && Object.hasOwn(DEFAULT_SETTINGS, k)) clean[k] = v;
   }
   if ('denyList' in clean && !Array.isArray(clean.denyList)) throw new Error('Deny list must be a list');
-  const next = { ...(await loadSettings(storageArea)), ...clean };
+  const merged = { ...(await loadSettings(storageArea)), ...clean };
+  // Only known keys are persisted, so retired fields (e.g. noticeAcknowledged) drop out.
+  const next = Object.fromEntries(Object.keys(DEFAULT_SETTINGS).map((k) => [k, merged[k]]));
+  next.jevModel = typeof next.jevModel === 'string' && next.jevModel.trim() ? next.jevModel.trim() : DEFAULT_SETTINGS.jevModel;
   if (!PROVIDERS.includes(next.provider)) throw new Error(`Unknown provider: ${next.provider}`);
   if (!MODES.includes(next.mode)) throw new Error(`Unknown mode: ${next.mode}`);
   if (typeof next.threshold !== 'number' || !(next.threshold >= 0.5 && next.threshold <= 0.99)) {

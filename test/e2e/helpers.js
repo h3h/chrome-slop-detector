@@ -88,7 +88,6 @@ export function testSettings(origin, patch = {}) {
     denyList: DEFAULT_SETTINGS.denyList.filter((h) => h !== '127.0.0.1' && h !== 'localhost'),
     jevEndpoint: `${origin}/jev`,
     jevApiKey: 'test-key',
-    noticeAcknowledged: true,
     ...patch
   };
 }

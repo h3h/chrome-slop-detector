@@ -87,9 +87,14 @@ function delay(ms, signal) {
   });
 }
 
-// Returns null when the player data never matches the URL's video (SPA navigation can leave
-// the player a step behind, so a mismatch is retried), when the URL changes while the
-// transcript loads, or when the caller aborts.
+// Returns the text to classify, or:
+// - null when the player bridge does not answer, when the player data never matches the URL's
+//   video (SPA navigation can leave the player a step behind, so a mismatch is retried), when
+//   the URL changes while the transcript loads, or when the caller aborts;
+// - {skip:'lang'} when no English track is usable and at least one track has a non-English
+//   languageCode (E6: the video is not English).
+// The title + description fallback is used only when there are no caption tracks or the
+// English track yields no text.
 export async function getYouTubeText(win, fetchFn, { signal, retries = 2, retryDelayMs = 400, requestTimeoutMs } = {}) {
   const want = () => videoIdFromUrl(win.location.href);
   const reqOpts = requestTimeoutMs === undefined ? {} : { timeoutMs: requestTimeoutMs };
@@ -101,13 +106,20 @@ export async function getYouTubeText(win, fetchFn, { signal, retries = 2, retryD
       if (signal?.aborted) return null;
     }
     info = await requestPlayer(win, reqOpts);
-    if (!info) return null;
+    if (!info || signal?.aborted) return null;
     if (info.videoId && info.videoId === want()) break;
     info = null;
   }
   if (!info || signal?.aborted) return null;
   const { videoId, title, shortDescription } = info;
   const picked = pickCaptionTrack(info.captionTracks);
+  // E6: captions exist but none is English, so the video is not English. The description
+  // fallback would send non-English text; skip instead.
+  // Malformed tracks alone (no string languageCode) don't prove a language: fall back.
+  const hasNonEn = info.captionTracks.some(
+    (t) => typeof t?.languageCode === 'string' && !t.languageCode.toLowerCase().startsWith('en'),
+  );
+  if (!picked && hasNonEn) return { skip: 'lang' };
   if (picked) {
     const text = await fetchTranscript(picked.track, fetchFn, { signal });
     if (signal?.aborted || videoId !== want()) return null;

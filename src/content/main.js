@@ -138,24 +138,32 @@ export function start({ chrome, win, doc, fetchFn, ytOptions = {}, getText = get
     if (!live() || !settings) return;
     if (trigger === 'auto' && settings.mode !== 'auto') return;
     const skip = shouldSkip(doc, url, settings.denyList);
-    if (skip) return onGate(skip);
+    if (skip) {
+      // "Never check this site" re-runs the check: drop a banner shown before the host was denied.
+      if (skip === 'denied') removeBanner(doc);
+      return onGate(skip);
+    }
 
     const kind = pageKind(doc, url);
     if (!kind) return onGate('not_article');
 
     let payload;
     if (kind === 'youtube') {
-      // Transcript fetching can take seconds; acknowledge before it.
-      onGate(null);
       const vid = videoIdFromUrl(url);
       if (!force && !redo && vid === lastVideoId) {
+        onGate(null);
         // Same video: reuse the result, waiting for it if the classify is still in flight.
         const v = lastView ?? (lastPending && (await lastPending));
         if (live() && samePage()) apply(v);
         return;
       }
+      // The run-check reply waits for the text so the popup learns why nothing was sent.
       const yt = await getText(win, fetchFn, { ...ytOptions, signal: ctl.signal });
-      if (!live() || !yt) return; // null: aborted or player mismatch — do not mark done
+      // Aborted: the caller's finally replies 'unavailable'. Nothing is marked done.
+      if (!live()) return;
+      if (!yt) return onGate('unavailable'); // no player reply, or it never matched the URL's video
+      if (typeof yt.skip === 'string') return onGate(yt.skip); // 'lang'
+      onGate(null);
       lastVideoId = yt.videoId;
       lastView = null;
       payload = { kind, text: yt.text, title: yt.title, asr: !!yt.asr, source: yt.source };

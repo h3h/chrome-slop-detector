@@ -30,6 +30,8 @@ To build somewhere else: `node scripts/build.mjs --out <dir>` (or set `SLOP_OUT=
 
 Then open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick
 the `dist/` folder. Rebuild and press the reload icon on the extension card after changes.
+Reload tabs that were open before loading the extension: content scripts are injected only into
+pages loaded afterwards.
 
 ## Adding a Jev key
 
@@ -37,7 +39,8 @@ the `dist/` folder. Rebuild and press the reload icon on the extension card afte
 2. Read the notice at the top, paste your key into **Jev API key**, and click **Save**.
 3. Click **Test provider** to send a fixed sample paragraph and see the raw response.
 
-Without a key the popup shows "Unknown — Add an API key in Settings" and nothing is sent.
+On a qualifying page without a key the popup shows "Unknown — Add an API key in Settings" and
+nothing is sent.
 
 ### The Jev API contract is unverified
 

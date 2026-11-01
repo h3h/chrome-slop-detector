@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createChromeStub } from '../chrome-stub.js';
-import { handleClassify, getTabState, denyHost, testProvider, setBadge, clearTabStateIfUrlChanged } from '../../src/background/core.js';
+import {
+  handleClassify, classifyForSender, getTabState, denyHost, testProvider, setBadge, clearTabStateIfUrlChanged
+} from '../../src/background/core.js';
 import { DEFAULT_DENY } from '../../src/lib/denylist.js';
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'));
@@ -224,6 +226,73 @@ describe('handleClassify', () => {
     const deps = await setup();
     await expect(handleClassify({ type: 'classify', text: 42 }, TAB, deps)).rejects.toThrow();
   });
+
+  it('unknown views carry the configured threshold', async () => {
+    const deps = await setup({ settings: { jevApiKey: 'k-1', threshold: 0.93 } });
+    expect(await handleClassify(msg({ text: words(10) }), TAB, deps)).toMatchObject({ state: 'unknown', reason: 'too_short', threshold: 0.93 });
+    const noKey = await setup({ settings: { threshold: 0.8 } });
+    expect(await handleClassify(msg(), TAB, noKey)).toMatchObject({ state: 'unknown', reason: 'no_provider', threshold: 0.8 });
+    const authDeps = await setup({ settings: { jevApiKey: 'k-1', threshold: 0.91 }, fetch: fakeFetch({}, 401) });
+    expect(await handleClassify(msg(), TAB, authDeps)).toMatchObject({ state: 'unknown', reason: 'auth', threshold: 0.91 });
+  });
+});
+
+describe('classifyForSender', () => {
+  const sender = (url, extra = {}) => ({ tab: { id: TAB, url }, frameId: 0, url, ...extra });
+
+  it('denied tab host -> unknown/denied, no provider call, no state or badge write', async () => {
+    const deps = await setup({ settings: { jevApiKey: 'k-1', denyList: ['example.com'] } });
+    const v = await classifyForSender(msg({ url: 'https://example.com/a' }), sender('https://sub.example.com/a'), deps);
+    expect(v).toMatchObject({ state: 'unknown', reason: 'denied', threshold: 0.9 });
+    expect(deps.fetch).not.toHaveBeenCalled();
+    expect(await deps.chrome.storage.session.get(`tab:${TAB}`)).toEqual({});
+    expect(deps.chrome._badges.get(TAB)).toBeUndefined();
+    expect((await deps.chrome.storage.local.get('rateLog')).rateLog).toBeUndefined();
+  });
+
+  it('denies when only the tab URL host is denied', async () => {
+    const deps = await setup({ settings: { jevApiKey: 'k-1', denyList: ['private.example'] } });
+    const v = await classifyForSender(msg({ url: 'https://public.example/a' }), sender('https://private.example/a'), deps);
+    expect(v).toMatchObject({ state: 'unknown', reason: 'denied' });
+    expect(deps.fetch).not.toHaveBeenCalled();
+  });
+
+  it('denies when only the message URL host is denied', async () => {
+    const deps = await setup({ settings: { jevApiKey: 'k-1', denyList: ['private.example'] } });
+    const v = await classifyForSender(msg({ url: 'https://private.example/a' }), sender('https://public.example/a'), deps);
+    expect(v).toMatchObject({ state: 'unknown', reason: 'denied' });
+    expect(deps.fetch).not.toHaveBeenCalled();
+    expect(await deps.chrome.storage.session.get(`tab:${TAB}`)).toEqual({});
+  });
+
+  it('uses msg.url as the view URL when it is http(s)', async () => {
+    const deps = await setup();
+    const v = await classifyForSender(msg({ url: 'https://example.com/from-msg' }), sender('https://example.com/from-tab'), deps);
+    expect(v).toMatchObject({ state: 'flagged', url: 'https://example.com/from-msg' });
+    expect((await getTabState(TAB, deps)).url).toBe('https://example.com/from-msg');
+  });
+
+  it('falls back to the tab URL when msg.url is not http(s)', async () => {
+    const deps = await setup();
+    const v = await classifyForSender(msg({ url: 'about:blank' }), sender('https://example.com/from-tab'), deps);
+    expect(v).toMatchObject({ state: 'flagged', url: 'https://example.com/from-tab' });
+  });
+
+  it('works without a tab URL (msg.url only)', async () => {
+    const deps = await setup();
+    expect(await classifyForSender(msg(), { tab: { id: TAB }, frameId: 0 }, deps)).toMatchObject({ state: 'flagged', url: 'https://example.com/a' });
+    expect((await classifyForSender(msg(), sender('chrome://newtab/'), deps)).url).toBe('https://example.com/a');
+    const denyDeps = await setup({ settings: { jevApiKey: 'k-1', denyList: ['example.com'] } });
+    expect(await classifyForSender(msg(), { tab: { id: TAB }, frameId: 0 }, denyDeps)).toMatchObject({ state: 'unknown', reason: 'denied' });
+    expect(denyDeps.fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects when neither URL is http(s)', async () => {
+    const deps = await setup();
+    await expect(classifyForSender(msg({ url: 'file:///x' }), { tab: { id: TAB }, frameId: 0 }, deps)).rejects.toThrow(/url/);
+    await expect(classifyForSender(msg({ url: 'file:///x' }), sender('chrome://newtab/'), deps)).rejects.toThrow(/url/);
+    expect(deps.fetch).not.toHaveBeenCalled();
+  });
 });
 
 describe('getTabState', () => {
@@ -366,6 +435,7 @@ describe('setBadge', () => {
 
 describe('sw.js routing', () => {
   const EXT = { url: 'chrome-extension://stubextensionid/popup/index.html' };
+  const OPTS = { url: 'chrome-extension://stubextensionid/options/index.html' };
   const content = (id, extra = {}) => ({ tab: { id }, frameId: 0, url: 'https://example.com/a', ...extra });
 
   afterEach(() => {
@@ -460,16 +530,86 @@ describe('sw.js routing', () => {
     const { chrome } = await loadSw();
     const s = await chrome._fireMessage({ type: 'deny-host', host: 'Foo.com' }, EXT);
     expect(s).toEqual({ ok: true });
-    expect((await chrome._fireMessage({ type: 'get-settings' }, EXT)).denyList).toContain('foo.com');
-    const ok = await chrome._fireMessage({ type: 'save-settings', patch: { threshold: 0.95 } }, EXT);
+    expect((await chrome._fireMessage({ type: 'get-settings' }, OPTS)).denyList).toContain('foo.com');
+    const ok = await chrome._fireMessage({ type: 'save-settings', patch: { threshold: 0.95 } }, OPTS);
     expect(ok).toMatchObject({ ok: true, settings: { threshold: 0.95 } });
-    const bad = await chrome._fireMessage({ type: 'save-settings', patch: { threshold: 1.2 } }, EXT);
+    const bad = await chrome._fireMessage({ type: 'save-settings', patch: { threshold: 1.2 } }, OPTS);
     expect(bad).toEqual({ ok: false, error: expect.stringMatching(/Threshold/) });
   });
 
   it('test-provider', async () => {
     const { chrome } = await loadSw();
-    expect(await chrome._fireMessage({ type: 'test-provider' }, EXT)).toMatchObject({ ok: true, aiProbability: 0.96 });
+    expect(await chrome._fireMessage({ type: 'test-provider' }, OPTS)).toMatchObject({ ok: true, aiProbability: 0.96 });
+  });
+
+  it('get-settings, save-settings and test-provider are options-page only', async () => {
+    const { chrome, fetch } = await loadSw();
+    for (const sender of [
+      EXT,
+      { url: 'chrome-extension://stubextensionid/options/other.html' },
+      { url: 'chrome-extension://stubextensionid/options/index.html.bak' },
+      { url: 'chrome-extension://stubextensionid/options/index.htmlx?y=1' },
+      { url: 'chrome-extension://otherid/options/index.html' }
+    ]) {
+      for (const m of [{ type: 'get-settings' }, { type: 'save-settings', patch: { threshold: 0.5 } }, { type: 'test-provider' }]) {
+        expect(await chrome._fireMessage(m, sender)).toEqual({ error: 'forbidden' });
+      }
+    }
+    expect(fetch).not.toHaveBeenCalled();
+    expect((await chrome.storage.local.get('settings')).settings.threshold).toBeUndefined();
+    for (const url of [
+      'chrome-extension://stubextensionid/options/index.html',
+      'chrome-extension://stubextensionid/options/index.html?x=1',
+      'chrome-extension://stubextensionid/options/index.html#y'
+    ]) {
+      expect((await chrome._fireMessage({ type: 'get-settings' }, { url })).provider).toBe('jev');
+    }
+  });
+
+  it('classify from a deny-listed tab returns unknown/denied without a provider call or state', async () => {
+    const { chrome, fetch } = await loadSw({ jevApiKey: 'k-1', denyList: ['example.com'] });
+    const v = await chrome._fireMessage(msg(), content(3, { tab: { id: 3, url: 'https://www.example.com/a' } }));
+    expect(v).toMatchObject({ state: 'unknown', reason: 'denied' });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await chrome.storage.session.get('tab:3')).toEqual({});
+  });
+
+  it('classify stores msg.url as the view URL', async () => {
+    const { chrome } = await loadSw();
+    const v = await chrome._fireMessage(msg(), content(3, { tab: { id: 3, url: 'https://example.com/tab' } }));
+    expect(v).toMatchObject({ state: 'flagged', url: 'https://example.com/a' });
+  });
+
+  it('classify is denied when the message URL host is denied even if the tab host is not', async () => {
+    const { chrome, fetch } = await loadSw({ jevApiKey: 'k-1', denyList: ['example.com'] });
+    const v = await chrome._fireMessage(msg(), content(3, { tab: { id: 3, url: 'https://other.test/a' } }));
+    expect(v).toMatchObject({ state: 'unknown', reason: 'denied' });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('deny-host with tabId clears that tab state and badge', async () => {
+    const { chrome } = await loadSw();
+    await chrome._fireMessage(msg(), content(4));
+    expect(chrome._badges.get(4).text).toBe('AI');
+    expect(await chrome._fireMessage({ type: 'deny-host', host: 'example.com', tabId: 4 }, EXT)).toEqual({ ok: true });
+    expect(await chrome.storage.session.get('tab:4')).toEqual({});
+    expect(chrome._badges.get(4).text).toBe('');
+    expect((await chrome._fireMessage({ type: 'get-tab-state', tabId: 4 }, EXT))).toBeNull();
+  });
+
+  it('deny-host rejects a non-integer tabId without saving', async () => {
+    const { chrome } = await loadSw();
+    await chrome._fireMessage(msg(), content(4));
+    expect(await chrome._fireMessage({ type: 'deny-host', host: 'example.com', tabId: '4' }, EXT)).toEqual({ error: expect.any(String) });
+    expect((await chrome.storage.local.get('settings')).settings.denyList).toBeUndefined();
+    expect(chrome._badges.get(4).text).toBe('AI');
+  });
+
+  it('deny-host failure leaves the tab state alone', async () => {
+    const { chrome } = await loadSw();
+    await chrome._fireMessage(msg(), content(4));
+    expect(await chrome._fireMessage({ type: 'deny-host', host: 'bad host', tabId: 4 }, EXT)).toEqual({ error: expect.any(String) });
+    expect(chrome._badges.get(4).text).toBe('AI');
   });
 
   it('unknown message types return an error', async () => {
@@ -502,11 +642,11 @@ describe('sw.js routing', () => {
     const { chrome } = await loadSw();
     await chrome._fireMessage(msg(), content(4));
     expect(chrome._badges.get(4).text).toBe('AI');
-    await chrome._fireMessage({ type: 'save-settings', patch: { threshold: 0.97 } }, EXT);
+    await chrome._fireMessage({ type: 'save-settings', patch: { threshold: 0.97 } }, OPTS);
     await tick();
     await tick();
     expect(chrome._badges.get(4).text).toBe('');
-    await chrome._fireMessage({ type: 'save-settings', patch: { threshold: 0.9 } }, EXT);
+    await chrome._fireMessage({ type: 'save-settings', patch: { threshold: 0.9 } }, OPTS);
     await tick();
     await tick();
     expect(chrome._badges.get(4).text).toBe('AI');

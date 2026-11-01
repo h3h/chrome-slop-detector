@@ -57,7 +57,7 @@ describe('options', () => {
     expect(saves(sent)[0].patch.jevEndpoint).toBe('http://example.com');
   });
 
-  it('saves all fields; a non-empty key acknowledges the notice', async () => {
+  it('saves all fields', async () => {
     const { sent } = await load();
     $('#provider').value = 'heuristic';
     $('#jevApiKey').value = '  key-123  ';
@@ -73,16 +73,31 @@ describe('options', () => {
       jevModel: 'jev-1.13.0',
       threshold: 0.8,
       mode: 'manual',
-      denyList: ['example.com', 'foo.org', 'news.site.com', 'bar.net'],
-      noticeAcknowledged: true
+      denyList: ['example.com', 'foo.org', 'news.site.com', 'bar.net']
     });
   });
 
-  it('does not set noticeAcknowledged without a key', async () => {
+  it('never writes noticeAcknowledged', async () => {
     const { sent } = await load();
+    $('#jevApiKey').value = 'key-1';
     $('#save').click();
     await vi.waitFor(() => expect(saves(sent)).toHaveLength(1));
     expect('noticeAcknowledged' in saves(sent)[0].patch).toBe(false);
+  });
+
+  it('omits jevModel from the patch when the field is blank', async () => {
+    const { sent } = await load();
+    $('#jevModel').value = '   ';
+    $('#save').click();
+    await vi.waitFor(() => expect(saves(sent)).toHaveLength(1));
+    expect('jevModel' in saves(sent)[0].patch).toBe(false);
+  });
+
+  it('notice says the Heuristic is conservative and no flag does not mean human-written', async () => {
+    await load();
+    const t = $('#notice').textContent.replace(/\s+/g, ' ');
+    expect(t).toMatch(/Heuristic is very conservative/);
+    expect(t).toMatch(/does not mean (the text is )?human-written/);
   });
 
   it('rejects a non-numeric threshold without saving', async () => {

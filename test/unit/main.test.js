@@ -182,6 +182,56 @@ describe('content main — YouTube', () => {
     expect(getText).toHaveBeenCalledTimes(2);
   });
 
+  describe('run-check reply waits for the YouTube text', () => {
+    async function runCheck(getText) {
+      const { chrome, win, doc } = setup({ href: 'https://www.youtube.com/watch?v=aaa', html: ytHtml, settings: { mode: 'manual' } });
+      start({ chrome, win, doc, fetchFn: vi.fn(), getText });
+      const sendResponse = vi.fn();
+      chrome._listeners.message[0]({ type: 'run-check', force: false }, {}, sendResponse);
+      return { chrome, sendResponse };
+    }
+
+    it("replies skipped 'lang' when getYouTubeText reports non-English captions", async () => {
+      const { chrome, sendResponse } = await runCheck(vi.fn(async () => ({ skip: 'lang' })));
+      await until(() => sendResponse.mock.calls.length);
+      expect(sendResponse).toHaveBeenCalledWith({ ok: true, skipped: 'lang' });
+      expect(sendResponse).toHaveBeenCalledTimes(1);
+      expect(classifyCalls(chrome)).toHaveLength(0);
+    });
+
+    it("replies skipped 'unavailable' on a null result (player mismatch or no player reply)", async () => {
+      const { chrome, sendResponse } = await runCheck(vi.fn(async () => null));
+      await until(() => sendResponse.mock.calls.length);
+      expect(sendResponse).toHaveBeenCalledWith({ ok: true, skipped: 'unavailable' });
+      expect(classifyCalls(chrome)).toHaveLength(0);
+    });
+
+    it('replies skipped null only after the text resolves, then classifies', async () => {
+      let resolve;
+      const getText = vi.fn(() => new Promise((r) => { resolve = r; }));
+      const { chrome, sendResponse } = await runCheck(getText);
+      await until(() => getText.mock.calls.length);
+      await flush();
+      expect(sendResponse).not.toHaveBeenCalled();
+      resolve(ytText('aaa'));
+      await until(() => sendResponse.mock.calls.length);
+      expect(sendResponse).toHaveBeenCalledWith({ ok: true, skipped: null });
+      await until(() => classifyCalls(chrome).length);
+      expect(classifyCalls(chrome)).toHaveLength(1);
+    });
+
+    it('a skip result leaves the video retryable', async () => {
+      const getText = vi.fn().mockResolvedValueOnce({ skip: 'lang' }).mockResolvedValueOnce(ytText('aaa'));
+      const { chrome, win, doc } = setup({ href: 'https://www.youtube.com/watch?v=aaa', html: ytHtml });
+      start({ chrome, win, doc, fetchFn: vi.fn(), getText });
+      await until(() => getText.mock.calls.length === 1);
+      await flush();
+      doc.dispatchEvent(new Event('yt-navigate-finish'));
+      await until(() => classifyCalls(chrome).length === 1);
+      expect(getText).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('ignores a non-English <html lang> on watch pages (UI language, not video language)', async () => {
     const { chrome, win, doc } = setup({ href: 'https://www.youtube.com/watch?v=aaa', html: '<html lang="de-DE"><body></body></html>' });
     const getText = vi.fn(async () => ytText('aaa'));
@@ -375,6 +425,21 @@ describe('content main — review fixes', () => {
       expect(sendResponse).toHaveBeenCalledWith({ ok: true, skipped: reason });
       expect(classifyCalls(chrome)).toHaveLength(0);
     }
+  });
+
+  it('removes the banner when a run ends skipped as denied (Never check this site)', async () => {
+    const denyList = [...DEFAULT_DENY];
+    const { chrome, win, doc } = setup({ settings: { denyList } });
+    start({ chrome, win, doc, fetchFn: vi.fn() });
+    await until(() => doc.querySelector(TAG));
+    expect(doc.querySelector(TAG)).not.toBeNull();
+    denyList.push('news.example.com');
+    const sendResponse = vi.fn();
+    chrome._listeners.message[0]({ type: 'run-check', force: false }, {}, sendResponse);
+    await until(() => sendResponse.mock.calls.length);
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true, skipped: 'denied' });
+    expect(doc.querySelector(TAG)).toBeNull();
+    expect(classifyCalls(chrome)).toHaveLength(1);
   });
 
   it('run-check replies no_text when Readability yields nothing', async () => {
