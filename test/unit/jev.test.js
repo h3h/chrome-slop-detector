@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { classify, buildRequest, parseResponse, OPTIONS, JEV_FIELDS, DEFAULT_MODEL } from '../../src/providers/jev.js';
+import { classify, buildRequest, parseResponse, OPTIONS, QUESTION_ID, DEFAULT_MODEL } from '../../src/providers/jev.js';
 import { ProviderError } from '../../src/providers/errors.js';
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'));
@@ -9,6 +9,8 @@ const MODEL = 'jev-1.13.0';
 const input = { text: 'some text', kind: 'article', url: 'https://example.com/a', title: 'A' };
 const jsonFetch = (body, status = 200) => vi.fn(async () => new Response(JSON.stringify(body), { status }));
 const opts = (fetch, extra = {}) => ({ apiKey: 'k-123', endpoint: ENDPOINT, model: MODEL, fetch, ...extra });
+const withAnswer = (answer) => ({ model: MODEL, answers: { [QUESTION_ID]: answer }, usage: { input_tokens: 1, output_tokens: 1 } });
+const choice = (probabilities, extra = {}) => withAnswer({ type: 'choice', choice: 'ai_generated', confidence: 0.9, probabilities, ...extra });
 
 async function expectCode(promise, code) {
   let err;
@@ -19,8 +21,8 @@ async function expectCode(promise, code) {
 }
 
 describe('jev request', () => {
-  it('posts JSON with bearer auth, model, input and question criteria', async () => {
-    const fetch = jsonFetch(fixture('jev-object.json'));
+  it('posts JSON with bearer auth, model, state and a choice question map', async () => {
+    const fetch = jsonFetch(fixture('jev-response.json'));
     await classify(input, opts(fetch));
     expect(fetch).toHaveBeenCalledTimes(1);
     const [url, init] = fetch.mock.calls[0];
@@ -30,45 +32,44 @@ describe('jev request', () => {
     expect(init.headers['Content-Type']).toBe('application/json');
     const body = JSON.parse(init.body);
     expect(body.model).toBe(MODEL);
-    expect(body.input).toBe('some text');
-    expect(Object.keys(body.questions[0].criteria)).toEqual(OPTIONS);
-    expect(body.questions[0].type).toBe('choice');
-    expect(body.questions[0].id).toBe('ai_authorship');
+    expect(body.state).toBe('some text');
+    expect(Object.keys(body.questions)).toEqual(['ai_authorship']);
+    const q = body.questions.ai_authorship;
+    expect(q.type).toBe('choice');
+    expect(typeof q.instructions).toBe('string');
+    expect(Object.keys(q.criteria)).toEqual(OPTIONS);
   });
 
-  it('buildRequest uses JEV_FIELDS names', () => {
-    const body = buildRequest({ text: 't', model: 'm' });
-    expect(body[JEV_FIELDS.model]).toBe('m');
-    expect(body[JEV_FIELDS.input]).toBe('t');
-    expect(Array.isArray(body[JEV_FIELDS.questions])).toBe(true);
+  it('buildRequest sends only documented top-level fields', () => {
+    expect(Object.keys(buildRequest({ text: 't', model: 'm' })).sort()).toEqual(['model', 'questions', 'state']);
   });
 });
 
 describe('jev response parsing', () => {
-  it('parses object probabilities', async () => {
-    const r = await classify(input, opts(jsonFetch(fixture('jev-object.json'))));
+  it('parses the documented choice answer', async () => {
+    const r = await classify(input, opts(jsonFetch(fixture('jev-response.json'))));
     expect(r.aiProbability).toBe(0.96);
     expect(r.provider).toBe('jev');
     expect(r.model).toBe(MODEL);
-    expect(r.raw).toEqual(fixture('jev-object.json'));
+    expect(r.raw).toEqual(fixture('jev-response.json'));
   });
-  it('parses array options', async () => {
-    const r = await classify(input, opts(jsonFetch(fixture('jev-array.json'))));
-    expect(r.aiProbability).toBe(0.12);
+  it('reports the chosen option as selected', () => {
+    expect(parseResponse(fixture('jev-response.json')).selected).toBe('ai_generated');
   });
-  it('parses nested results', async () => {
-    const r = await classify(input, opts(jsonFetch(fixture('jev-nested.json'))));
-    expect(r.aiProbability).toBe(0.91);
-  });
-  it('reports selected when present', () => {
-    expect(parseResponse(fixture('jev-object.json')).selected).toBe('ai_generated');
-    expect(parseResponse(fixture('jev-array.json')).selected).toBe('human_written');
+  it.each([
+    ['answer under another question id', { model: MODEL, answers: { other: choice({ ai_generated: 0.5 }).answers[QUESTION_ID] } }],
+    ['non-choice answer type', withAnswer({ type: 'noul', noul: 0.9 })],
+    ['probabilities missing', withAnswer({ type: 'choice', choice: 'ai_generated', confidence: 1 })],
+    ['ai_generated missing', choice({ human_written: 1 })],
+    ['top-level probabilities (old guessed shape)', { probabilities: { ai_generated: 0.9 } }],
+  ])('rejects %s', (_, body) => {
+    expect(() => parseResponse(body)).toThrow(ProviderError);
   });
   it('rejects unknown shape', async () => {
     await expectCode(classify(input, opts(jsonFetch({ foo: 1 }))), 'bad_response');
   });
   it('rejects out-of-range probability', async () => {
-    await expectCode(classify(input, opts(jsonFetch({ probabilities: { ai_generated: 1.4 } }))), 'bad_response');
+    await expectCode(classify(input, opts(jsonFetch(choice({ ai_generated: 1.4 })))), 'bad_response');
   });
   it('rejects non-JSON body', async () => {
     const fetch = vi.fn(async () => new Response('<html>oops</html>', { status: 200 }));
@@ -80,10 +81,10 @@ describe('jev response parsing', () => {
 });
 
 describe('jev HTTP and transport errors', () => {
-  it.each([[401, 'auth'], [403, 'auth'], [429, 'provider_rate_limit'], [500, 'bad_response']])(
+  it.each([[401, 'auth'], [403, 'auth'], [429, 'provider_rate_limit'], [529, 'provider_rate_limit'], [400, 'bad_response'], [422, 'bad_response'], [500, 'bad_response']])(
     'status %i -> %s', async (status, code) => {
       const err = await expectCode(classify(input, opts(jsonFetch({ error: 'x' }, status))), code);
-      if (code === 'bad_response') expect(err.status).toBe(500);
+      expect(err.status).toBe(status);
     });
   it('fetch rejection -> network', async () => {
     const fetch = vi.fn(async () => { throw new TypeError('Failed to fetch'); });
@@ -98,7 +99,7 @@ describe('jev HTTP and transport errors', () => {
     await expectCode(classify(input, opts(fetch, { timeoutMs: 20 })), 'timeout');
   });
   it('missing api key -> auth without calling fetch', async () => {
-    const fetch = jsonFetch(fixture('jev-object.json'));
+    const fetch = jsonFetch(fixture('jev-response.json'));
     const err = await expectCode(classify(input, opts(fetch, { apiKey: '' })), 'auth');
     expect(err.message).toBe('No API key');
     expect(fetch).not.toHaveBeenCalled();
@@ -107,7 +108,7 @@ describe('jev HTTP and transport errors', () => {
 
 describe('jev raw trimming', () => {
   it('truncates raw over 2048 chars', async () => {
-    const body = { ...fixture('jev-object.json'), explanation: 'x'.repeat(3000) };
+    const body = { ...fixture('jev-response.json'), explanation: 'x'.repeat(3000) };
     const r = await classify(input, opts(jsonFetch(body)));
     expect(r.raw).toEqual({ truncated: true, selected: 'ai_generated', aiProbability: 0.96 });
   });
@@ -118,27 +119,19 @@ describe('jev review fixes', () => {
 
   it('exports DEFAULT_MODEL and uses it when model is omitted', async () => {
     expect(DEFAULT_MODEL).toBe('jev-1.13.0');
-    expect(buildRequest({ text: 't' })[JEV_FIELDS.model]).toBe('jev-1.13.0');
-    const fetch = jsonFetch(fixture('jev-object.json'));
+    expect(buildRequest({ text: 't' }).model).toBe('jev-1.13.0');
+    const fetch = jsonFetch(fixture('jev-response.json'));
     const r = await classify(input, { apiKey: 'k', endpoint: ENDPOINT, fetch });
     expect(r.model).toBe('jev-1.13.0');
     expect(JSON.parse(fetch.mock.calls[0][1].body).model).toBe('jev-1.13.0');
   });
 
-  it('skips a candidate map without ai_generated and uses a later one', () => {
-    const json = { probabilities: { foo: 0.5 }, results: [{ probabilities: { ai_generated: 0.7 } }] };
-    expect(parseResponse(json).aiProbability).toBe(0.7);
-  });
-  it('fails closed when an earlier map has an invalid ai_generated even if a later one is valid', () => {
-    const json = { probabilities: { ai_generated: 'high' }, results: [{ probabilities: { ai_generated: 0.7 } }] };
-    expect(() => parseResponse(json)).toThrow(ProviderError);
-  });
-  it('bad_response when no candidate has ai_generated', () => {
-    expect(() => parseResponse({ probabilities: { foo: 0.5 }, options: [] })).toThrow(ProviderError);
+  it('fails closed on a non-numeric ai_generated probability', () => {
+    expect(() => parseResponse(choice({ ai_generated: 'high' }))).toThrow(ProviderError);
   });
 
   it('truncated raw drops selected not in OPTIONS', async () => {
-    const body = { selected: 'x'.repeat(3000), probabilities: { ai_generated: 0.5 } };
+    const body = choice({ ai_generated: 0.5 }, { choice: 'x'.repeat(3000) });
     const r = await classify(input, opts(jsonFetch(body)));
     expect(r.raw).toEqual({ truncated: true, aiProbability: 0.5 });
   });
@@ -151,7 +144,7 @@ describe('jev review fixes', () => {
   });
 
   it('whitespace-only api key -> auth without calling fetch', async () => {
-    const fetch = jsonFetch(fixture('jev-object.json'));
+    const fetch = jsonFetch(fixture('jev-response.json'));
     await expectCode(classify(input, opts(fetch, { apiKey: '   \n\t' })), 'auth');
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -182,7 +175,7 @@ describe('jev review fixes', () => {
 
   it('clears its timer after success and after error', async () => {
     vi.useFakeTimers();
-    await classify(input, opts(jsonFetch(fixture('jev-object.json'))));
+    await classify(input, opts(jsonFetch(fixture('jev-response.json'))));
     expect(vi.getTimerCount()).toBe(0);
     await expectCode(classify(input, opts(jsonFetch({ error: 'x' }, 500))), 'bad_response');
     expect(vi.getTimerCount()).toBe(0);

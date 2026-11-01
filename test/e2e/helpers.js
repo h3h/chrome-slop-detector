@@ -45,8 +45,16 @@ export async function startServer() {
         const human = Math.max(0, Math.round((1 - p - 0.01) * 1000) / 1000);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
-          selected: p >= 0.5 ? 'ai_generated' : 'human_written',
-          probabilities: { ai_generated: p, human_written: human, unclear: 0.01 }
+          model: 'jev-1.13.0',
+          answers: {
+            ai_authorship: {
+              type: 'choice',
+              choice: p >= 0.5 ? 'ai_generated' : 'human_written',
+              confidence: 0.9,
+              probabilities: { ai_generated: p, human_written: human, unclear: 0.01 }
+            }
+          },
+          usage: { input_tokens: 1, output_tokens: 1 }
         }));
         return;
       }

@@ -1,26 +1,16 @@
-// Jev (TypeSafe) adapter. The API contract is UNVERIFIED (third-party write-ups only):
-// every request field name lives in JEV_FIELDS and the parser accepts several shapes,
-// failing closed with ProviderError('bad_response') on anything it does not recognise.
+// Jev (TypeSafe) adapter for POST /v1/systemone, per https://docs.typesafe.ai/api.md:
+// one Choice question over the page text; aiProbability is that answer's p(ai_generated).
+// Anything that does not match the documented ChoiceAnswer fails closed with bad_response.
 import { ProviderError } from './errors.js';
 
-export const JEV_FIELDS = {
-  model: 'model',
-  input: 'input',
-  questions: 'questions',
-  questionId: 'id',
-  questionType: 'type',
-  instructions: 'instructions',
-  criteria: 'criteria',
-};
-
 export const QUESTION_ID = 'ai_authorship';
-export const QUESTION_TYPE = 'choice';
 export const AI_OPTION = 'ai_generated';
 export const OPTIONS = ['ai_generated', 'human_written', 'unclear'];
 export const DEFAULT_MODEL = 'jev-1.13.0';
 
+// The question id is never sent to the model, so the instructions carry the full meaning.
 const INSTRUCTIONS =
-  'Was this text obviously written by an AI language model? Judge the writing itself: stock phrasing, uniform rhythm, generic structure and hedged filler suggest AI; specific lived detail, idiosyncratic voice and uneven rhythm suggest a human.';
+  'Was the `state` text obviously written by an AI language model? Judge the writing itself: stock phrasing, uniform rhythm, generic structure and hedged filler suggest AI; specific lived detail, idiosyncratic voice and uneven rhythm suggest a human.';
 
 const CRITERIA = {
   ai_generated: 'The text was clearly produced by an AI language model with little human rewriting.',
@@ -31,86 +21,27 @@ const CRITERIA = {
 const RAW_MAX = 2048;
 
 export function buildRequest({ text, model = DEFAULT_MODEL }) {
-  const criteria = {};
-  for (const opt of OPTIONS) criteria[opt] = CRITERIA[opt];
   return {
-    [JEV_FIELDS.model]: model,
-    [JEV_FIELDS.input]: text,
-    [JEV_FIELDS.questions]: [{
-      [JEV_FIELDS.questionId]: QUESTION_ID,
-      [JEV_FIELDS.questionType]: QUESTION_TYPE,
-      [JEV_FIELDS.instructions]: INSTRUCTIONS,
-      [JEV_FIELDS.criteria]: criteria,
-    }],
+    model,
+    state: text,
+    questions: { [QUESTION_ID]: { type: 'choice', instructions: INSTRUCTIONS, criteria: CRITERIA } },
   };
 }
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-
-function firstOwn(o, keys) {
-  for (const k of keys) if (hasOwn(o, k)) return o[k];
-  return undefined;
-}
-
-function mapFromArray(arr) {
-  const map = Object.create(null);
-  for (const e of arr) {
-    if (!isObj(e)) continue;
-    const name = firstOwn(e, ['option', 'label', 'name']);
-    if (typeof name !== 'string' || name in map) continue;
-    map[name] = firstOwn(e, ['probability', 'score', 'p']);
-  }
-  return map;
-}
-
-function findMap(c) {
-  if (!isObj(c)) return null;
-  if (isObj(c.probabilities)) {
-    const map = Object.create(null);
-    for (const k of Object.keys(c.probabilities)) map[k] = c.probabilities[k];
-    return map;
-  }
-  for (const k of ['probabilities', 'options', 'scores']) {
-    if (Array.isArray(c[k])) return mapFromArray(c[k]);
-  }
-  return null;
-}
-
-function pickSelected(...objs) {
-  for (const o of objs) {
-    if (!isObj(o)) continue;
-    for (const k of ['selected', 'answer', 'choice']) {
-      if (typeof o[k] === 'string') return o[k];
-    }
-  }
-  return undefined;
-}
 
 export function parseResponse(json) {
-  if (!isObj(json)) throw new ProviderError('bad_response', 'Response is not an object');
-  const candidates = [
-    json,
-    Array.isArray(json.results) ? json.results[0] : undefined,
-    Array.isArray(json.answers) ? json.answers[0] : undefined,
-    Array.isArray(json.questions) ? json.questions[0] : undefined,
-    json.result,
-  ];
-  for (const c of candidates) {
-    const map = findMap(c);
-    // A map without ai_generated does not stop the search; a present-but-invalid
-    // value fails closed rather than falling through to a later candidate.
-    if (!map || !(AI_OPTION in map)) continue;
-    const p = map[AI_OPTION];
-    if (typeof p !== 'number' || !Number.isFinite(p) || p < 0 || p > 1) {
-      throw new ProviderError('bad_response', 'Missing or invalid ai_generated probability');
-    }
-    const out = { aiProbability: p };
-    const selected = pickSelected(c, json);
-    if (selected !== undefined) out.selected = selected;
-    return out;
+  const answer = isObj(json) && isObj(json.answers) ? json.answers[QUESTION_ID] : undefined;
+  if (!isObj(answer) || answer.type !== 'choice' || !isObj(answer.probabilities)) {
+    throw new ProviderError('bad_response', 'No choice answer in response');
   }
-  throw new ProviderError('bad_response', 'No probability map in response');
+  const p = answer.probabilities[AI_OPTION];
+  if (typeof p !== 'number' || !Number.isFinite(p) || p < 0 || p > 1) {
+    throw new ProviderError('bad_response', 'Missing or invalid ai_generated probability');
+  }
+  const out = { aiProbability: p };
+  if (typeof answer.choice === 'string') out.selected = answer.choice;
+  return out;
 }
 
 function trimRaw(raw, parsed) {
@@ -159,7 +90,8 @@ export async function classify({ text }, { apiKey, endpoint, model = DEFAULT_MOD
     status = res.status;
     if (!res.ok) discardBody(res);
     if (status === 401 || status === 403) throw new ProviderError('auth', `HTTP ${status}`, status);
-    if (status === 429) throw new ProviderError('provider_rate_limit', 'HTTP 429', status);
+    // 529 is TypeSafe's "overloaded": same retry-later handling as a rate limit.
+    if (status === 429 || status === 529) throw new ProviderError('provider_rate_limit', `HTTP ${status}`, status);
     if (!res.ok) throw new ProviderError('bad_response', `HTTP ${status}`, status);
     try {
       bodyText = await res.text();

@@ -42,22 +42,17 @@ pages loaded afterwards.
 On a qualifying page without a key the popup shows "Unknown — Add an API key in Settings" and
 nothing is sent.
 
-### The Jev API contract is unverified
+### The Jev API contract
 
-The request and response shape in `src/providers/jev.js` comes from third-party write-ups; no
-primary documentation could be reached when this was built. If requests fail with
-"Unexpected response from provider" or "API key rejected":
+`src/providers/jev.js` follows TypeSafe's documented [System One API](https://docs.typesafe.ai/api.md):
+`POST /v1/systemone` with `Authorization: Bearer <key>` and a body of `model`, `state` (the page
+text) and one Choice question, `ai_authorship`, with options `ai_generated`, `human_written` and
+`unclear`. The AI score is `answers.ai_authorship.probabilities.ai_generated`. Any response not in
+that shape fails closed as "Unexpected response from provider". HTTP 429 and 529 (overloaded) are
+treated as rate limits.
 
-- All request field names are constants in `JEV_FIELDS` at the top of `src/providers/jev.js`;
-  `buildRequest()` assembles the body from them.
-- The question's option names are `OPTIONS` (`ai_generated`, `human_written`, `unclear`); the
-  probability used as the AI score is the one for `AI_OPTION` (`ai_generated`).
-- Responses are read by `parseResponse()`. It accepts per-option probabilities as an object or
-  an array, at the top level or under the first question's result; anything else fails closed.
-- The `Authorization: Bearer <key>` header is set in `classify()`, in the `fetch` call's
-  `headers`.
-- The endpoint (default `https://api.typesafe.ai/v1/systemone`) and model (default
-  `jev-1.13.0`) are editable in Options.
+The endpoint (default `https://api.typesafe.ai/v1/systemone`) and model (default `jev-1.13.0`)
+are editable in Options.
 
 Jev is a general-purpose classifier, not a trained AI-text detector. Its accuracy for this task
 is unverified. Treat flags as hints, not proof.

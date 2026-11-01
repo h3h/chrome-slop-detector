@@ -36,12 +36,11 @@ classify({ text, kind, url, title }, { apiKey, endpoint, model, fetch, signal })
    - Question: instructions "Was this text obviously written by an AI language model?"; choice
      criteria `ai_generated`, `human_written`, `unclear`, each with a one-line description.
      `aiProbability = p(ai_generated)` (unclear mass is not added).
-   - **Unverified contract** (from third-party write-ups; no primary doc reachable):
-     `POST https://api.typesafe.ai/v1/systemone`, `Authorization: Bearer <key>`, default model
-     `jev-1.13.0` (pinned; `jev-latest` floats). All request field names are constants at the
-     top of `providers/jev.js`. Parser accepts per-option probabilities as an object
-     (`{ai_generated: 0.9, ...}`) or an array (`[{option, probability}]`), found at the top level
-     or under the first question's result; anything else → `bad_response`.
+   - **Contract** ([docs](https://docs.typesafe.ai/api.md)): `POST https://api.typesafe.ai/v1/systemone`,
+     `Authorization: Bearer <key>`, default model `jev-1.13.0` (pinned; `jev-latest` floats).
+     Body `{model, state: text, questions: {ai_authorship: {type: 'choice', instructions, criteria}}}`.
+     Parser reads `answers.ai_authorship` (`type: 'choice'`, `probabilities` object, `choice`);
+     anything else → `bad_response`. 429 and 529 (overloaded) → `provider_rate_limit`.
    - Endpoint and model are editable in Options. Endpoint must be `https://`; `http://` only
      for `localhost` / `127.0.0.1` (tests). The endpoint receives the API key.
    - Jev is a general classifier, not a trained AI-text detector. Options says so.
@@ -183,7 +182,7 @@ src/options/            plain DOM; provider, key, endpoint, model, threshold, mo
 
 ## Known risks
 
-- Jev API shape unverified; isolated adapter + editable endpoint/model + Test button.
+- Jev API shape may change; isolated adapter + editable endpoint/model + Test button.
 - All detectors have false positives; vendor accuracy claims are self-reported.
 - YouTube internals rot; fallback path required.
 - Browsing text sent to a third party; opt-in by adding a key; deny list + gates.

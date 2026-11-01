@@ -11,8 +11,12 @@ const fixture = (name) => JSON.parse(readFileSync(new URL(`../fixtures/${name}`,
 const textFixture = (f) => readFileSync(new URL(`../fixtures/${f}`, import.meta.url), 'utf8').split('\n').slice(1).join('\n');
 
 const words = (n, prefix = 'w') => Array.from({ length: n }, (_, i) => `${prefix}${i}`).join(' ');
-const jevBody = (p) => ({ selected: 'x', probabilities: { ai_generated: p, human_written: 1 - p, unclear: 0 } });
-const fakeFetch = (body = fixture('jev-object.json'), status = 200) =>
+const jevBody = (p) => ({
+  model: 'jev-1.13.0',
+  answers: { ai_authorship: { type: 'choice', choice: 'x', confidence: 1, probabilities: { ai_generated: p, human_written: 1 - p, unclear: 0 } } },
+  usage: { input_tokens: 1, output_tokens: 1 },
+});
+const fakeFetch = (body = fixture('jev-response.json'), status = 200) =>
   vi.fn(async () => new Response(JSON.stringify(body), { status }));
 
 const TAB = 7;
@@ -150,7 +154,7 @@ describe('handleClassify', () => {
     const deps = await setup();
     const v = await handleClassify(msg({ text: words(3000) }), TAB, deps);
     const body = JSON.parse(deps.fetch.mock.calls[0][1].body);
-    expect(body.input.split(' ')).toHaveLength(2500);
+    expect(body.state.split(' ')).toHaveLength(2500);
     expect(v).toMatchObject({ truncated: true, words: 3000 });
   });
 
@@ -166,7 +170,7 @@ describe('handleClassify', () => {
     let release;
     const gate = new Promise((r) => { release = r; });
     deps.fetch = vi.fn(async (_u, init) => {
-      const input = JSON.parse(init.body).input;
+      const input = JSON.parse(init.body).state;
       if (input.startsWith('old')) await gate;
       return new Response(JSON.stringify(jevBody(input.startsWith('old') ? 0.99 : 0.1)), { status: 200 });
     });
@@ -385,7 +389,7 @@ describe('testProvider', () => {
     expect(r).toMatchObject({ ok: true, aiProbability: 0.96 });
     expect(r.raw).toBeDefined();
     const body = JSON.parse(deps.fetch.mock.calls[0][1].body);
-    expect(body.input.split(' ').length).toBeGreaterThanOrEqual(250);
+    expect(body.state.split(' ').length).toBeGreaterThanOrEqual(250);
     const store = await deps.chrome.storage.local.get(['cache', 'rateLog']);
     expect(store.cache).toBeUndefined();
     expect(store.rateLog).toEqual([NOW]);

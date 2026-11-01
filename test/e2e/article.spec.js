@@ -35,7 +35,7 @@ test('flagged article: banner, badge, one call with the key; cache on reload; po
   expect(srv.calls).toHaveLength(1);
   expect(srv.calls[0].headers.authorization).toBe('Bearer test-key');
   expect(srv.calls[0].body.model).toBe('jev-1.13.0');
-  expect(srv.calls[0].body.input).toContain('Harbor Town Reopens Its Century-Old Ferry Line');
+  expect(srv.calls[0].body.state).toContain('Harbor Town Reopens Its Century-Old Ferry Line');
 
   const tabId = await tabIdFor(sw, '/fixtures/article.html');
   expect(tabId).not.toBeNull();

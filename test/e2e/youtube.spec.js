@@ -64,8 +64,8 @@ test('YouTube watch page with an English transcript is classified from the trans
   expect(transcriptRequests.length).toBeGreaterThanOrEqual(1);
   expect(new URL(transcriptRequests[0]).searchParams.get('fmt')).toBe('json3');
   expect(srv.calls).toHaveLength(1);
-  expect(srv.calls[0].body.input).toContain(PHRASE);
-  expect(srv.calls[0].body.input.startsWith('Test video\n\nshort')).toBe(false); // not the description fallback
+  expect(srv.calls[0].body.state).toContain(PHRASE);
+  expect(srv.calls[0].body.state.startsWith('Test video\n\nshort')).toBe(false); // not the description fallback
 
   const tabId = await tabIdFor(sw, 'youtube.com/watch');
   await expect.poll(() => badge(sw, tabId)).toBe('AI');
