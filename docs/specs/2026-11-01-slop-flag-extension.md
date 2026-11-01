@@ -137,7 +137,9 @@ src/options/            plain DOM; provider, key, endpoint, model, threshold, mo
 - Permissions: `storage`, `tabs`; `host_permissions: ["<all_urls>"]` (content script + any
   endpoint). No `activeTab`, no optional permissions.
 - Messages (content → SW): `{type:'classify', kind, text, title, url, asr, source, force?}` →
-  response `{state, reason?, aiProbability?, threshold, provider, source}`. Popup →
+  response `{state, reason?, aiProbability?, threshold, provider, source}`. Content → SW also: `get-content-config` → `{mode, denyList}` only (never the key). Content-script
+  senders may only send `classify` and `get-content-config`; all other messages require an
+  extension-page sender. Popup →
   SW: `get-tab-state`, `check-tab` (Manual / Re-check with `force` bypassing cache, still rate
   limited), `deny-host`. SW → content: `run-check` (popup button).
 

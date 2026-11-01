@@ -1,4 +1,4 @@
-function makeArea() {
+function makeArea(onChange = () => {}) {
   let data = {};
   return {
     async get(keys) {
@@ -13,10 +13,20 @@ function makeArea() {
       return out;
     },
     async set(obj) {
-      for (const [k, v] of Object.entries(obj)) data[k] = structuredClone(v);
+      const changes = {};
+      for (const [k, v] of Object.entries(obj)) {
+        changes[k] = { oldValue: k in data ? structuredClone(data[k]) : undefined, newValue: structuredClone(v) };
+        data[k] = structuredClone(v);
+      }
+      onChange(changes);
     },
     async remove(keys) {
-      for (const k of Array.isArray(keys) ? keys : [keys]) delete data[k];
+      const changes = {};
+      for (const k of Array.isArray(keys) ? keys : [keys]) {
+        if (k in data) changes[k] = { oldValue: structuredClone(data[k]), newValue: undefined };
+        delete data[k];
+      }
+      if (Object.keys(changes).length) onChange(changes);
     },
     async clear() {
       data = {};
@@ -26,7 +36,12 @@ function makeArea() {
 
 export function createChromeStub() {
   const storageListeners = [];
-  const listeners = { message: [], installed: [], tabRemoved: [] };
+  const listeners = { message: [], installed: [], tabRemoved: [], tabUpdated: [] };
+  // Real chrome.storage.onChanged fires asynchronously after the write resolves.
+  const fireStorage = (area) => (changes) => {
+    const copy = structuredClone(changes);
+    queueMicrotask(() => { for (const l of storageListeners) l(copy, area); });
+  };
   const chrome = {
     _sent: [],
     _tabMessages: [],
@@ -40,6 +55,9 @@ export function createChromeStub() {
         if (!async) resolve(undefined);
       });
     },
+    _fireTabUpdated(id, changeInfo = {}, tab = { id }) {
+      for (const l of listeners.tabUpdated) l(id, changeInfo, tab);
+    },
     _fireTabRemoved(id) {
       for (const l of listeners.tabRemoved) l(id);
     },
@@ -47,13 +65,15 @@ export function createChromeStub() {
       for (const l of storageListeners) l(changes, area);
     },
     storage: {
-      local: makeArea(),
-      session: makeArea(),
+      local: makeArea(fireStorage('local')),
+      session: makeArea(fireStorage('session')),
       onChanged: { addListener: (fn) => storageListeners.push(fn) }
     },
     runtime: {
       onMessage: { addListener: (fn) => listeners.message.push(fn) },
       onInstalled: { addListener: (fn) => listeners.installed.push(fn) },
+      id: 'stubextensionid',
+      getURL: (path = '') => `chrome-extension://stubextensionid/${String(path).replace(/^\//, '')}`,
       async sendMessage(msg) {
         chrome._sent.push(msg);
       }
@@ -62,10 +82,11 @@ export function createChromeStub() {
       async query() {
         return [];
       },
-      async sendMessage(tabId, msg) {
-        chrome._tabMessages.push({ tabId, msg });
+      async sendMessage(tabId, msg, options) {
+        chrome._tabMessages.push(options === undefined ? { tabId, msg } : { tabId, msg, options });
       },
-      onRemoved: { addListener: (fn) => listeners.tabRemoved.push(fn) }
+      onRemoved: { addListener: (fn) => listeners.tabRemoved.push(fn) },
+      onUpdated: { addListener: (fn) => listeners.tabUpdated.push(fn) }
     },
     action: {
       async setBadgeText({ text, tabId }) {
