@@ -5,6 +5,7 @@
   --panel: #f8f9fa;
   --border: #dadce0;
   --error: #c62828;
+  --brand: #7d3f8a;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -15,6 +16,7 @@
     --panel: #292a2d;
     --border: #3c4043;
     --error: #ef5350;
+  --brand: #c48ccd;
   }
 }
 body {
@@ -22,6 +24,7 @@ body {
   font: 14px/1.5 system-ui, sans-serif;
   color: var(--fg);
   background: var(--bg);
+  accent-color: var(--brand);
 }
 main {
   max-width: 640px;
@@ -31,6 +34,13 @@ main {
 h1 {
   font-size: 20px;
   margin: 0 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
 }
 .notice {
   background: var(--panel);

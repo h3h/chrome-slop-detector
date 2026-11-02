@@ -1,11 +1,11 @@
 // Builds the unpacked extension. Usage: node scripts/build.mjs [--out <dir>]
 // Output dir: --out argument, else SLOP_OUT env, else dist/ (relative paths resolve from cwd).
 import { build } from 'esbuild';
-import { rm, mkdir, cp, readFile, writeFile, access } from 'node:fs/promises';
-import { deflateSync } from 'node:zlib';
+import { rm, mkdir, cp, readFile, access } from 'node:fs/promises';
 import { readdirSync, statSync, existsSync } from 'node:fs';
 import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ICON_SIZES, iconPath, writeIcon } from './icons.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'src');
@@ -19,8 +19,6 @@ export function outDir(argv = process.argv.slice(2), env = process.env) {
   }
   return env.SLOP_OUT ? resolve(env.SLOP_OUT) : join(ROOT, 'dist');
 }
-const ICON_SIZES = [16, 48, 128];
-const ICON_RGB = [0xc6, 0x28, 0x28];
 
 const ENTRIES = [
   ['content/main.js', 'iife'],
@@ -30,45 +28,6 @@ const ENTRIES = [
   ['options/options.js', 'esm']
 ];
 const STATIC = ['manifest.json', 'popup/index.html', 'popup/popup.css', 'options/index.html', 'options/options.css'];
-
-// --- minimal PNG encoder (solid colour, RGB, 8-bit) ---
-const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
-  let c = n;
-  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-  return c >>> 0;
-});
-
-function crc32(buf) {
-  let c = 0xffffffff;
-  for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
-}
-
-function chunk(type, data) {
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length);
-  const td = Buffer.concat([Buffer.from(type, 'latin1'), data]);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(td));
-  return Buffer.concat([len, td, crc]);
-}
-
-export function solidPng(size, [r, g, b]) {
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 2; // colour type: RGB
-  const row = Buffer.alloc(1 + size * 3); // filter byte 0, then pixels
-  for (let x = 0; x < size; x++) row.set([r, g, b], 1 + x * 3);
-  const raw = Buffer.concat(Array.from({ length: size }, () => row));
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', deflateSync(raw)),
-    chunk('IEND', Buffer.alloc(0))
-  ]);
-}
 
 // true if `child` is `parent` or inside it.
 function within(parent, child) {
@@ -99,11 +58,7 @@ const exists = (p) => access(p).then(() => true, () => false);
 
 // Icons are committed; this only regenerates them if they were deleted.
 async function ensureIcons() {
-  await mkdir(join(SRC, 'icons'), { recursive: true });
-  for (const size of ICON_SIZES) {
-    const p = join(SRC, 'icons', `icon${size}.png`);
-    if (!(await exists(p))) await writeFile(p, solidPng(size, ICON_RGB));
-  }
+  for (const size of ICON_SIZES) if (!(await exists(iconPath(size)))) await writeIcon(size);
 }
 
 async function main() {

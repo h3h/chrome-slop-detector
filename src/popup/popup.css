@@ -2,7 +2,7 @@
   --fg: #1f1f1f;
   --muted: #5f6368;
   --bg: #ffffff;
-  --flag: #c62828;
+  --flag: #7d3f8a;
   --ok: #2e7d32;
   --border: #dadce0;
   color-scheme: light dark;
@@ -12,7 +12,7 @@
     --fg: #e8eaed;
     --muted: #9aa0a6;
     --bg: #202124;
-    --flag: #ef5350;
+    --flag: #c48ccd;
     --ok: #66bb6a;
     --border: #3c4043;
   }
@@ -32,6 +32,9 @@ h1 {
   font-size: 14px;
   color: var(--muted);
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .state {
   margin: 0 0 8px;

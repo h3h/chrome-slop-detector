@@ -75,7 +75,7 @@ describe('handleClassify', () => {
       source: 'article', asr: false, cached: false, url: 'https://example.com/a', title: 'T', words: 400,
       truncated: false, ts: NOW
     });
-    expect(deps.chrome._badges.get(TAB)).toEqual({ text: 'AI', color: '#c62828' });
+    expect(deps.chrome._badges.get(TAB)).toEqual({ text: 'AI', color: '#3c1f42' });
     const { [`tab:${TAB}`]: saved } = await deps.chrome.storage.session.get(`tab:${TAB}`);
     expect(saved).toMatchObject({ aiProbability: 0.96, provider: 'jev', url: 'https://example.com/a' });
     const [url, init] = deps.fetch.mock.calls[0];
@@ -435,7 +435,7 @@ describe('setBadge', () => {
     await setBadge(3, { state: 'unknown', reason: 'too_short' }, chrome);
     await setBadge(4, { state: 'clear' }, chrome);
     await setBadge(5, { state: 'pending' }, chrome);
-    expect(chrome._badges.get(1)).toEqual({ text: 'AI', color: '#c62828' });
+    expect(chrome._badges.get(1)).toEqual({ text: 'AI', color: '#3c1f42' });
     expect(chrome._badges.get(2)).toEqual({ text: '?', color: '#757575' });
     expect(chrome._badges.get(3).text).toBe('');
     expect(chrome._badges.get(4).text).toBe('');

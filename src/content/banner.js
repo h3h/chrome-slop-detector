@@ -20,15 +20,19 @@ const HOST_STYLE = {
 
 const SHADOW_CSS = `
 .bar { box-sizing: border-box; display: flex; align-items: center; gap: 12px;
-  padding: 8px 12px; background: #c62828; color: #fff;
+  padding: 8px 12px; background: #f4eaf6; color: #562a5c; border-left: 4px solid #7d3f8a;
   font: 14px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  box-shadow: 0 2px 6px rgba(0,0,0,.3); }
+  box-shadow: 0 2px 6px rgba(0,0,0,.15); }
 .text { flex: 1; min-width: 0; }
 .main { font-weight: 600; }
-.note { font-size: 12px; opacity: .9; }
+.note { font-size: 12px; opacity: .85; }
 button { all: unset; cursor: pointer; font-size: 20px; line-height: 1; padding: 2px 8px;
-  border-radius: 4px; color: #fff; }
-button:hover, button:focus-visible { background: rgba(255,255,255,.2); outline: none; }
+  border-radius: 4px; color: inherit; }
+button:hover, button:focus-visible { background: rgba(125,63,138,.15); outline: none; }
+@media (prefers-color-scheme: dark) {
+  .bar { background: #2f1f33; color: #e1c2e6; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+  button:hover, button:focus-visible { background: rgba(225,194,230,.15); }
+}
 `;
 
 function currentUrl(doc) {

@@ -57,7 +57,7 @@ export async function setBadge(tabId, view, chrome) {
   let color = null;
   if (view?.state === 'flagged') {
     text = 'AI';
-    color = '#c62828';
+    color = '#3c1f42';
   } else if (view?.state === 'unknown' && !BADGE_QUIET_REASONS.includes(view.reason)) {
     text = '?';
     color = '#757575';
