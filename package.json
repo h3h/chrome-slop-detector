@@ -8,7 +8,9 @@
     "icons": "node scripts/icons.mjs",
     "test:unit": "vitest run",
     "test:live": "vitest run --config vitest.live.config.js",
-    "test:e2e": "npm run build && playwright test"
+    "test:e2e": "npm run build && playwright test",
+    "package": "npm run build && cd dist && zip -qrFS ../slop-flag-$npm_package_version.zip .",
+    "store-assets": "npm run build && node scripts/store-assets.mjs"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0"

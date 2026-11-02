@@ -94,8 +94,20 @@ npm run build
 npx playwright test test/e2e/article.spec.js
 ```
 
-Tests never call real provider APIs; end-to-end tests point the Jev adapter at a local mock
-server.
+Unit and end-to-end tests never call real provider APIs; end-to-end tests point the Jev
+adapter at a local mock server. `npm run test:live` scores real-world AI samples against the
+real Jev API and is skipped unless `JEV_API_KEY` is set.
+
+## Publishing to the Chrome Web Store
+
+```sh
+npm run package        # builds and writes slop-flag-<version>.zip
+npm run store-assets   # renders screenshots and the promo tile into store/
+```
+
+Listing copy, permission justifications and privacy answers for the developer dashboard are in
+[docs/store-listing.md](docs/store-listing.md). The privacy policy is [PRIVACY.md](PRIVACY.md).
+Bump `version` in both `package.json` and `src/manifest.json` before each upload.
 
 ## Layout
 
