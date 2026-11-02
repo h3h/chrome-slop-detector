@@ -7,6 +7,7 @@
     "build": "node scripts/build.mjs",
     "icons": "node scripts/icons.mjs",
     "test:unit": "vitest run",
+    "test:live": "vitest run --config vitest.live.config.js",
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {

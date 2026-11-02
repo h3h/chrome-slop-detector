@@ -34,9 +34,10 @@ classify({ text, kind, url, title }, { apiKey, endpoint, model, fetch, signal })
 1. **Jev (TypeSafe)** — default provider. Jev is a hosted non-generative classifier: you send
    text plus a closed question and it returns the chosen option and a probability per option.
    - Question: structured instructions asking whether an AI language model wrote the text, with
-     lists of AI writing signs (em-dash contrasts, punchy verdicts, personified labels, stats
-     restated as takeaways, salesy second-person tone) and human signs (first-hand detail,
-     idiosyncratic rhythm, encyclopedic reference style); choice criteria `ai_generated`,
+     a short list of AI writing signs drawn from https://tropes.fyi (em-dash contrasts, punchy
+     verdicts, personified labels, stats restated as takeaways, salesy second-person tone,
+     rhetorical questions, magic adverbs, hollow "-ing" significance tails) and human signs
+     (first-hand detail, idiosyncratic rhythm, encyclopedic or press-release style); choice criteria `ai_generated`,
      `human_written`, `unclear`, each with a one-line description.
      `aiProbability = p(ai_generated)` (unclear mass is not added).
    - **Contract** ([docs](https://docs.typesafe.ai/api.md)): `POST https://api.typesafe.ai/v1/systemone`,

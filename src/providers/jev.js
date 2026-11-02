@@ -9,26 +9,32 @@ export const OPTIONS = ['ai_generated', 'human_written', 'unclear'];
 export const DEFAULT_MODEL = 'jev-1.13.0';
 // Bump whenever INSTRUCTIONS or CRITERIA change: it is part of the cache key, so verdicts from
 // an older prompt are not reused.
-export const PROMPT_VERSION = 2;
+export const PROMPT_VERSION = 3;
 
 // The question id is never sent to the model, so the instructions carry the full meaning.
 // Modern AI prose is confident and number-dense rather than hedged, so the signs describe its
-// style; tuned on a small labeled set (AI SEO guides, AI explainers, human essays, wikis).
+// style, drawing on the tropes catalogued at https://tropes.fyi. Listing the whole catalogue
+// diluted the signal; this short list scored best on a small labeled set (AI SEO guides,
+// explainers, encyclopedic and social posts; human essays, wikis, press releases).
 const INSTRUCTIONS = {
   question: 'Was the `state` text written by an AI language model (such as ChatGPT or Claude), with little human rewriting?',
-  judge: 'Judge the prose style, not the topic or whether the facts are accurate. Modern AI writing is often confident and dense with numbers rather than hedged, so do not treat specificity or statistics as evidence of a human.',
+  judge: 'Judge the prose style, not the topic or whether the facts are accurate. Modern AI writing is often confident and dense with numbers rather than hedged, so do not treat specificity or statistics as evidence of a human. Several different signs from the list together are strong evidence of AI, even when each alone would be unremarkable.',
   ai_signs: [
-    'Frequent em-dash asides and "X — not Y" or "not X, but Y" contrasts',
-    'Short punchy verdict sentences and tidy aphorisms that sum up the point just made',
-    'Items given personified role labels (the reliable one, the big sibling, the wild card)',
-    'Statistics restated as verdicts and tidy takeaways after every fact',
-    'Section titles with a colon and a subtitle; rule-of-three lists; polished, even, salesy tone throughout',
+    'Frequent em-dash asides and "X — not Y", "not X, but Y" or "Not X. Not Y. Just Z." contrasts',
+    'Short punchy verdict sentences, one-line paragraphs and tidy aphorisms that sum up the point just made',
+    'Items given personified role labels (the reliable one, the big sibling, the wild card) or invented concept labels ("the X paradox")',
+    'Statistics restated as verdicts and tidy takeaways after every fact; counts announced before lists',
+    'Section titles with a colon and a subtitle or "Why X matters"; rule-of-three lists; polished, even, salesy tone throughout',
     'Second-person tour-guide advice with no first-hand experience, anecdote or sensory detail',
+    'Self-posed rhetorical questions answered at once ("The result? Devastating.") and false suspense ("Here\'s the thing")',
+    'Magic adverbs (quietly, genuinely, fundamentally) and ornate words (tapestry, landscape, delve, seamless, unlock); "serves as" instead of "is"',
+    '"-ing" tails adding hollow significance ("highlighting its importance"); signposted conclusions and summaries of what was just said',
   ],
   human_signs: [
     'First-hand experience, anecdotes, digressions or opinions only a particular person would hold',
     'Uneven or idiosyncratic rhythm, asides, humor, informal slips or typos',
-    'Neutral encyclopedic or reference style with citations, as in Wikipedia or wiki travel guides',
+    'Neutral encyclopedic or reference style with citations and without the hollow significance tails above, as in Wikipedia or wiki travel guides',
+    'Plain press-release or news style that states facts without the devices above',
   ],
 };
 
